@@ -21,8 +21,12 @@ fi
 echo "==> git pull"
 git pull
 
-echo "==> npm ci"
-npm ci
+# .env.local often has NODE_ENV=production. That makes bare `npm ci` skip
+# devDependencies — no drizzle-kit (db:push), no typescript (next build).
+# Install the full tree for this machine step; the systemd unit still runs
+# the app with NODE_ENV=production.
+echo "==> npm ci (with devDependencies)"
+npm ci --include=dev
 
 if [ -f "$SQLITE_PATH" ]; then
   bak="${SQLITE_PATH}.bak-$(date +%F-%H%M)"

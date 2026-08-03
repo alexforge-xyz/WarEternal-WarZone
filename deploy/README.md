@@ -183,13 +183,18 @@ cd /var/www/warzone
 bash deploy/update.sh
 ```
 
+`npm ci` inside the script uses `--include=dev`: with `NODE_ENV=production` in
+`.env.local`, bare `npm ci` skips devDependencies and then `db:push` /
+`next build` fail (`drizzle-kit: not found`, missing TypeScript, etc.). The
+running service still gets `NODE_ENV=production` from the systemd unit.
+
 Same steps by hand:
 
 ```bash
 cd /var/www/warzone
 set -a; . ./.env.local; set +a
 git pull
-npm ci
+npm ci --include=dev
 npm run db:push
 npm run build
 sudo systemctl restart warzone
