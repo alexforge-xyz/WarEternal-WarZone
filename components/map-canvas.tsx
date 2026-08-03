@@ -1,20 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { LucideIcon } from "lucide-react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { EdgeRow, NodeKind, NodeRow } from "@/db/schema";
 import { BUFF_COLOR } from "@/lib/constants";
-import { BUFF_ICONS, dominantBuff } from "./buff-icon";
-import { KIND_ICONS } from "./kind-icon";
+import { dominantBuff, type BuffField } from "./buff-icon";
 
 /**
  * Shared map surface: coordinate layout, pan, wheel zoom, pinch zoom, and the
  * node/road drawing. Both screens use it — `/links` to wire roads, `/map` to
  * work with ownership — so the gesture handling exists once.
+ *
+ * Performance notes (phones):
+ * - Pan updates the SVG viewBox via the DOM; React only re-renders when zoom
+ *   (and thus mark size / label LOD) changes, or when the gesture ends.
+ * - Glyphs are cheap <symbol>/<use> paths, not 231 Lucide React trees.
+ * - Edge strokes use non-scaling-stroke so width stays correct without a
+ *   re-render on every pan frame.
  */
 
 type View = { x: number; y: number; w: number; h: number };
 type Pt = { node: NodeRow; px: number; py: number };
+type Detail = "full" | "compact" | "none";
 
 /**
  * What each node says about itself.
@@ -71,7 +84,82 @@ const LEVEL_UNTIL = 4.5;
 const MIN_W = 4;
 const MAX_W = 400_000;
 
-export function MapCanvas({
+function detailOf(v: View, cssW: number): Detail {
+  const k = v.w / Math.max(cssW, 1);
+  return k < NAME_UNTIL ? "full" : k < LEVEL_UNTIL ? "compact" : "none";
+}
+
+function viewBoxAttr(v: View): string {
+  return `${v.x} ${v.y} ${v.w} ${v.h}`;
+}
+
+/** Lightweight map glyphs (24×24). One symbol each, reused via <use>. */
+function MapGlyphDefs() {
+  const stroke = {
+    fill: "none" as const,
+    stroke: GLYPH_INK,
+    strokeWidth: 2.2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  return (
+    <defs>
+      {/* kind */}
+      <symbol id="mg-city" viewBox="0 0 24 24">
+        <path {...stroke} d="M4 20V10l8-6 8 6v10H4z" />
+        <path {...stroke} d="M10 20v-6h4v6" />
+      </symbol>
+      <symbol id="mg-gate" viewBox="0 0 24 24">
+        <path {...stroke} d="M5 20V9a7 7 0 0 1 14 0v11" />
+        <path {...stroke} d="M9 20v-6h6v6" />
+      </symbol>
+      <symbol id="mg-turret" viewBox="0 0 24 24">
+        <path {...stroke} d="M8 20V9l4-5 4 5v11H8z" />
+        <path {...stroke} d="M8 11h8" />
+      </symbol>
+      <symbol id="mg-castle" viewBox="0 0 24 24">
+        <path
+          {...stroke}
+          d="M5 16l2.5-3 2.5 2 2-4 2 4 2.5-2L19 16v4H5v-4z"
+        />
+        <path {...stroke} d="M12 5v4M9 7h6" />
+      </symbol>
+      <symbol id="mg-base" viewBox="0 0 24 24">
+        <path {...stroke} d="M7 21V4" />
+        <path {...stroke} d="M7 5h9l-2 3 2 3H7" />
+      </symbol>
+      {/* buff */}
+      <symbol id="mg-buffAtk" viewBox="0 0 24 24">
+        <path {...stroke} d="M14.5 4.5l5 5M12 7l-7 7 3 3 7-7M5 19l3-1" />
+      </symbol>
+      <symbol id="mg-buffDef" viewBox="0 0 24 24">
+        <path {...stroke} d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z" />
+      </symbol>
+      <symbol id="mg-buffHp" viewBox="0 0 24 24">
+        <path
+          {...stroke}
+          d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2 4 4 0 0 1 7 2c0 5.5-7 10-7 10z"
+        />
+      </symbol>
+    </defs>
+  );
+}
+
+const KIND_GLYPH_ID: Record<NodeKind, string> = {
+  city: "#mg-city",
+  gate: "#mg-gate",
+  turret: "#mg-turret",
+  castle: "#mg-castle",
+  base: "#mg-base",
+};
+
+const BUFF_GLYPH_ID: Record<BuffField, string> = {
+  buffAtk: "#mg-buffAtk",
+  buffDef: "#mg-buffDef",
+  buffHp: "#mg-buffHp",
+};
+
+function MapCanvasImpl({
   nodes,
   edges,
   rotated,
@@ -113,6 +201,9 @@ export function MapCanvas({
   viewRef.current = view;
   const sizeRef = useRef(size);
   sizeRef.current = size;
+  const detailRef = useRef<Detail>("none");
+  const rafReactRef = useRef<number | null>(null);
+  const ptsRef = useRef<Pt[]>([]);
 
   const pts = useMemo<Pt[]>(
     () =>
@@ -123,6 +214,7 @@ export function MapCanvas({
       }),
     [nodes, rotated, flipY],
   );
+  ptsRef.current = pts;
 
   const byId = useMemo(() => new Map(pts.map((p) => [p.node.id, p])), [pts]);
 
@@ -148,9 +240,47 @@ export function MapCanvas({
     return () => ro.disconnect();
   }, []);
 
+  /** Push the camera into the SVG without React. Safe while k is unchanged. */
+  const paintViewBox = useCallback((v: View) => {
+    viewRef.current = v;
+    const svg = svgRef.current;
+    if (svg) svg.setAttribute("viewBox", viewBoxAttr(v));
+  }, []);
+
+  /** Commit camera to React (mark sizes, labels, stroke fallbacks). */
+  const commitView = useCallback((v: View) => {
+    viewRef.current = v;
+    detailRef.current = detailOf(v, sizeRef.current.w);
+    const svg = svgRef.current;
+    if (svg) svg.setAttribute("viewBox", viewBoxAttr(v));
+    setView(v);
+  }, []);
+
+  /**
+   * Coalesce zoom updates to one React render per frame. Pan stays DOM-only
+   * until the gesture ends (k is constant while only x/y move).
+   */
+  const scheduleZoomView = useCallback(
+    (v: View) => {
+      paintViewBox(v);
+      if (rafReactRef.current != null) return;
+      rafReactRef.current = requestAnimationFrame(() => {
+        rafReactRef.current = null;
+        commitView(viewRef.current);
+      });
+    },
+    [paintViewBox, commitView],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (rafReactRef.current != null) cancelAnimationFrame(rafReactRef.current);
+    };
+  }, []);
+
   const fit = useCallback(() => {
     if (!pts.length) {
-      setView({ x: -50, y: -50, w: 100, h: (100 * size.h) / size.w });
+      commitView({ x: -50, y: -50, w: 100, h: (100 * size.h) / size.w });
       return;
     }
     let minX = Infinity;
@@ -168,13 +298,13 @@ export function MapCanvas({
     let h = Math.max(maxY - minY, 1) * 1.3;
     if (h / w < aspect) h = w * aspect;
     else w = h / aspect;
-    setView({
+    commitView({
       x: (minX + maxX) / 2 - w / 2,
       y: (minY + maxY) / 2 - h / 2,
       w,
       h,
     });
-  }, [pts, size]);
+  }, [pts, size, commitView]);
 
   /**
    * Re-fit only on the things that actually invalidate the framing — never on
@@ -197,12 +327,11 @@ export function MapCanvas({
    */
   const aspect = size.h / Math.max(size.w, 1);
   useEffect(() => {
-    setView((v) => {
-      const h = v.w * aspect;
-      if (Math.abs(h - v.h) < 1e-6) return v;
-      return { ...v, y: v.y + (v.h - h) / 2, h };
-    });
-  }, [aspect]);
+    const v = viewRef.current;
+    const h = v.w * aspect;
+    if (Math.abs(h - v.h) < 1e-6) return;
+    commitView({ ...v, y: v.y + (v.h - h) / 2, h });
+  }, [aspect, commitView]);
 
   /* ---------------- wheel zoom ---------------- */
 
@@ -215,15 +344,19 @@ export function MapCanvas({
       const mx = (e.clientX - rect.left) / rect.width;
       const my = (e.clientY - rect.top) / rect.height;
       const factor = e.deltaY > 0 ? 1.18 : 1 / 1.18;
-      setView((v) => {
-        const w = Math.min(Math.max(v.w * factor, MIN_W), MAX_W);
-        const h = w * (v.h / v.w);
-        return { x: v.x + (v.w - w) * mx, y: v.y + (v.h - h) * my, w, h };
+      const v = viewRef.current;
+      const w = Math.min(Math.max(v.w * factor, MIN_W), MAX_W);
+      const h = w * (v.h / v.w);
+      scheduleZoomView({
+        x: v.x + (v.w - w) * mx,
+        y: v.y + (v.h - h) * my,
+        w,
+        h,
       });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [scheduleZoomView]);
 
   /* ---------------- drag & pinch ---------------- */
 
@@ -314,7 +447,12 @@ export function MapCanvas({
       const anchorY = p.view.y + p.view.h * p.my;
       const cmx = (a.x + b.x) / 2 / sw;
       const cmy = (a.y + b.y) / 2 / sh;
-      setView({ x: anchorX - w * cmx, y: anchorY - h * cmy, w, h });
+      scheduleZoomView({
+        x: anchorX - w * cmx,
+        y: anchorY - h * cmy,
+        w,
+        h,
+      });
       return;
     }
 
@@ -330,7 +468,9 @@ export function MapCanvas({
     }
     if (!moved.current) return;
     const v = viewRef.current;
-    setView({
+    // Pan only: DOM viewBox. k is unchanged, so marks/labels stay correct
+    // without a full React pass on every finger pixel.
+    paintViewBox({
       ...v,
       x: d.vx - (dx * v.w) / sw,
       y: d.vy - (dy * v.h) / sh,
@@ -346,11 +486,11 @@ export function MapCanvas({
     const my = v.y + ((clientY - rect.top) / rect.height) * v.h;
     const k = v.w / Math.max(rect.width, 1);
     let best: { id: number; d2: number } | null = null;
-    for (const { node, px, py } of pts) {
+    for (const { node, px, py } of ptsRef.current) {
       const r = MARK_PX[node.kind] * k * 1.6;
-      const dx = mx - px;
-      const dy = my - py;
-      const d2 = dx * dx + dy * dy;
+      const ddx = mx - px;
+      const ddy = my - py;
+      const d2 = ddx * ddx + ddy * ddy;
       if (d2 <= r * r && (!best || d2 < best.d2)) {
         best = { id: node.id, d2 };
       }
@@ -368,7 +508,16 @@ export function MapCanvas({
     const el = e.currentTarget as Element;
     if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
     if (pointers.current.size < 2) pinch.current = null;
-    if (pointers.current.size === 0) drag.current = null;
+    if (pointers.current.size === 0) {
+      drag.current = null;
+      // Flush any DOM-only pan (or pending zoom rAF) into React so the next
+      // data re-render does not snap the camera back.
+      if (rafReactRef.current != null) {
+        cancelAnimationFrame(rafReactRef.current);
+        rafReactRef.current = null;
+      }
+      commitView(viewRef.current);
+    }
     if (wasTap) pickNodeAtClient(e.clientX, e.clientY);
   }
 
@@ -376,7 +525,10 @@ export function MapCanvas({
     if ((e.currentTarget as Element).hasPointerCapture(e.pointerId)) return;
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinch.current = null;
-    if (pointers.current.size === 0) drag.current = null;
+    if (pointers.current.size === 0) {
+      drag.current = null;
+      commitView(viewRef.current);
+    }
   }
 
   // Non-passive touchmove: iOS still rubber-bands the document unless we call
@@ -395,7 +547,15 @@ export function MapCanvas({
 
   /** SVG units per CSS pixel — keeps marks and labels a constant screen size. */
   const k = view.w / Math.max(size.w, 1);
-  const detail = k < NAME_UNTIL ? "full" : k < LEVEL_UNTIL ? "compact" : "none";
+  const detail = detailOf(view, size.w);
+  detailRef.current = detail;
+
+  // Precompute styles once per styleFor identity (parent throttles the clock).
+  const styles = useMemo(() => {
+    const m = new Map<number, NodeStyle>();
+    for (const { node } of pts) m.set(node.id, styleFor(node));
+    return m;
+  }, [pts, styleFor]);
 
   return (
     <div
@@ -416,13 +576,15 @@ export function MapCanvas({
         ref={svgRef}
         className="absolute inset-0 h-full w-full select-none"
         style={{ touchAction: "none" }}
-        viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+        viewBox={viewBoxAttr(view)}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerLeave={onPointerLeave}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
       >
+        <MapGlyphDefs />
+
         <g>
           {edges.map((edge) => {
             const a = byId.get(edge.aId);
@@ -438,19 +600,22 @@ export function MapCanvas({
                   x2={b.px}
                   y2={b.py}
                   stroke={touches ? "#38bdf8" : "#3f4d69"}
-                  strokeWidth={(touches ? 4.8 : 3) * k}
+                  strokeWidth={touches ? 4.8 : 3}
                   strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
                 />
                 {onEdgeClick && (
                   // Wide invisible line so a road is tappable on a phone.
+                  // Hit width stays ~screen pixels via non-scaling-stroke.
                   <line
                     x1={a.px}
                     y1={a.py}
                     x2={b.px}
                     y2={b.py}
                     stroke="transparent"
-                    strokeWidth={14 * k}
+                    strokeWidth={14}
                     strokeLinecap="round"
+                    vectorEffect="non-scaling-stroke"
                     style={{ cursor: "pointer" }}
                     onClick={(ev) => {
                       ev.stopPropagation();
@@ -466,18 +631,22 @@ export function MapCanvas({
 
         <g>
           {pts.map(({ node, px, py }) => {
-            const s = styleFor(node);
+            const s = styles.get(node.id) ?? { fill: "#64748b" };
             const isSel = selectedId === node.id;
             const buff = mode === "buff" ? dominantBuff(node) : null;
             // In buff mode a node that grants nothing shrinks out of the way:
             // the whole point of the view is spotting what is worth taking.
             const r =
               MARK_PX[node.kind] * k * (mode === "buff" && !buff ? 0.45 : 1);
-            const Glyph: LucideIcon | null =
+            const glyphId =
               mode === "buff"
-                ? buff && BUFF_ICONS[buff.field]
-                : KIND_ICONS[node.kind];
-            const extra = labelFor?.(node) ?? null;
+                ? buff
+                  ? BUFF_GLYPH_ID[buff.field]
+                  : null
+                : KIND_GLYPH_ID[node.kind];
+            const gSize = r * GLYPH_RATIO;
+            const extra =
+              detail === "full" && labelFor ? labelFor(node) : null;
 
             return (
               <g
@@ -523,20 +692,24 @@ export function MapCanvas({
                   stroke={s.outline ?? "#0b0f17"}
                   strokeWidth={1.6 * k}
                 />
-                {Glyph && (
-                  <Glyph
-                    x={-r * (GLYPH_RATIO / 2)}
-                    y={-r * (GLYPH_RATIO / 2)}
-                    width={r * GLYPH_RATIO}
-                    height={r * GLYPH_RATIO}
-                    color={GLYPH_INK}
-                    strokeWidth={2.4}
+                {glyphId && (
+                  <use
+                    href={glyphId}
+                    x={-gSize / 2}
+                    y={-gSize / 2}
+                    width={gSize}
+                    height={gSize}
                     style={{ pointerEvents: "none" }}
                   />
                 )}
                 {s.flag && (
                   <g transform={`translate(${r * 1.5} ${-r * 1.6})`}>
-                    <circle r={5.5 * k} fill="#eab308" stroke="#0b0f17" strokeWidth={k} />
+                    <circle
+                      r={5.5 * k}
+                      fill="#eab308"
+                      stroke="#0b0f17"
+                      strokeWidth={k}
+                    />
                     <text
                       y={2 * k}
                       textAnchor="middle"
@@ -549,7 +722,7 @@ export function MapCanvas({
                     </text>
                   </g>
                 )}
-                {/* Finger-sized hit area, whatever the mark is doing. */}
+                {/* Finger-sized hit area for mouse; touch uses pickNodeAtClient. */}
                 <circle r={Math.max(r * 1.6, 22 * k)} fill="transparent" />
 
                 {mode === "buff"
@@ -624,3 +797,5 @@ export function MapCanvas({
   );
 }
 
+/** Skip re-renders when the parent only re-ticks for the side panel clock. */
+export const MapCanvas = memo(MapCanvasImpl);

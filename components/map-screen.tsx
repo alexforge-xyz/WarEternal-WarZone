@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
 import {
   Check,
   Crosshair,
@@ -36,6 +43,9 @@ import { useClock } from "./use-clock";
 
 const NAME_KEY = "warzone_officer";
 
+/** Map clock steps — panel still ticks every second for countdowns. */
+const MAP_CLOCK_STEP_S = 5;
+
 export function MapScreen({
   nodes,
   edges,
@@ -48,7 +58,10 @@ export function MapScreen({
   const { t } = useT();
   const { canMonitor } = useRole();
   const kingdoms = useKingdoms();
+  // 1s for the side panel countdowns. The map uses a stepped clock so it
+  // does not rebuild ~600 SVG nodes every second on a phone.
   const now = useClock(serverNow);
+  const mapNow = Math.floor(now / MAP_CLOCK_STEP_S) * MAP_CLOCK_STEP_S;
 
   const [rotated, setRotated] = useState(true);
   const [flipY, setFlipY] = useState(false);
@@ -73,43 +86,17 @@ export function MapScreen({
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const selectedNode = selected !== null ? byId.get(selected) : undefined;
 
-  const { colorOf, list: kingdomList } = kingdoms;
+  const { colorOf, list: kingdomList, shortOf } = kingdoms;
 
-  const styleFor = useCallback(
-    (node: NodeRow): NodeStyle => ({
-      fill: colorOf(node.owner),
-      ring: node.owner ? colorOf(node.owner) : null,
-      flag: isStale(node.checkedAt, now),
-      shield: hasShield(node.shieldUntil, now),
-    }),
-    [now, colorOf],
+  const onSelectNode = useCallback((id: number) => setSelected(id), []);
+  const onFit = useCallback(() => setFitToken((v) => v + 1), []);
+  const onToggleMode = useCallback(
+    () => setMode((m) => (m === "buff" ? "kind" : "buff")),
+    [],
   );
-
-  const labelFor = useCallback(
-    (node: NodeRow) => {
-      const left = shieldSecondsLeft(node.shieldUntil, now);
-      return left > 0 ? formatDuration(left) : null;
-    },
-    [now],
-  );
-
-  const totals = useMemo(() => {
-    const byKingdom: Record<number, number> = Object.fromEntries(
-      kingdomList.map((k) => [k.id, 0]),
-    );
-    let free = 0;
-    let stale = 0;
-    for (const node of nodes) {
-      // A node held by a kingdom that has since been removed counts as free.
-      if (node.owner !== null && node.owner in byKingdom) {
-        byKingdom[node.owner] += 1;
-      } else {
-        free += 1;
-      }
-      if (isStale(node.checkedAt, now)) stale += 1;
-    }
-    return { byKingdom, free, stale };
-  }, [nodes, now, kingdomList]);
+  const onToggleRotated = useCallback(() => setRotated((v) => !v), []);
+  const onToggleFlipY = useCallback(() => setFlipY((v) => !v), []);
+  const onOpenSheet = useCallback(() => setSheetOpen(true), []);
 
   const listed = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -121,6 +108,13 @@ export function MapScreen({
       );
     });
   }, [nodes, query, onlyStale, now]);
+
+  // Stale count for the filter chip — fine-grained is fine here (list, not SVG).
+  const staleCount = useMemo(() => {
+    let n = 0;
+    for (const node of nodes) if (isStale(node.checkedAt, now)) n += 1;
+    return n;
+  }, [nodes, now]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -153,7 +147,7 @@ export function MapScreen({
           }`}
         >
           <span className="text-[var(--color-warn)]">!</span>
-          {t("map.onlyStale")} · {totals.stale}
+          {t("map.onlyStale")} · {staleCount}
         </button>
       </div>
 
@@ -230,103 +224,30 @@ export function MapScreen({
     // browser steals touches for page scroll instead of map pan.
     <div className="grid h-[calc(100svh-6rem)] max-h-[calc(100svh-6rem)] grid-cols-1 overflow-hidden lg:grid-cols-[1fr_340px]">
       <div className="relative min-h-0 lg:border-e">
-        <MapCanvas
+        {/*
+          Isolated from the 1s panel clock: only re-renders when mapNow (5s),
+          selection, mode, or map data changes — not every shield tick.
+        */}
+        <OwnershipMap
           nodes={nodes}
           edges={edges}
+          mapNow={mapNow}
+          colorOf={colorOf}
+          kingdomList={kingdomList}
+          shortOf={shortOf}
           rotated={rotated}
           flipY={flipY}
-          selectedId={selected}
-          onSelectNode={(id) => setSelected(id)}
-          styleFor={styleFor}
-          labelFor={labelFor}
           mode={mode}
           fitToken={fitToken}
-          toolbar={
-            <>
-              <button
-                className="btn !min-h-10 text-xs"
-                onClick={() => setFitToken((v) => v + 1)}
-              >
-                <Crosshair size={14} />
-                {t("map.fit")}
-              </button>
-              <button
-                className={`btn !min-h-10 text-xs ${mode === "buff" ? "border-[var(--color-accent)]" : ""}`}
-                onClick={() =>
-                  setMode((m) => (m === "buff" ? "kind" : "buff"))
-                }
-                title={t("map.buffsHint")}
-              >
-                <Swords size={14} />
-                {t("map.buffs")}
-              </button>
-              <button
-                className={`btn !min-h-10 text-xs ${rotated ? "border-[var(--color-accent)]" : ""}`}
-                onClick={() => setRotated((v) => !v)}
-                title={t("map.rot45Hint")}
-              >
-                <RotateCcw size={14} />
-                {t("map.rot45")}
-              </button>
-              <button
-                className={`btn !min-h-10 text-xs ${flipY ? "border-[var(--color-accent)]" : ""}`}
-                onClick={() => setFlipY((v) => !v)}
-                title={t("map.flipYHint")}
-              >
-                {t("map.flipY")}
-              </button>
-              <button
-                className="btn !min-h-10 text-xs lg:hidden"
-                onClick={() => setSheetOpen(true)}
-              >
-                <List size={14} />
-                {totals.stale > 0 && (
-                  <span className="text-[var(--color-warn)]">
-                    {totals.stale}
-                  </span>
-                )}
-              </button>
-            </>
-          }
-          status={
-            selectedNode ? (
-              <span className="flex items-center gap-2">
-                <b>{selectedNode.name}</b>
-                <button
-                  className="btn btn-ghost !min-h-8 !px-2 text-xs lg:hidden"
-                  onClick={() => setSheetOpen(true)}
-                >
-                  {t("own.title")}
-                </button>
-              </span>
-            ) : (
-              <span className="text-[var(--color-text-soft)]">
-                {t("map.ownHint")}
-              </span>
-            )
-          }
-          empty={
-            <p className="text-sm text-[var(--color-text-dim)]">
-              {t("map.addNodesFirst")}
-            </p>
-          }
+          selectedId={selected}
+          selectedName={selectedNode?.name ?? null}
+          onSelectNode={onSelectNode}
+          onFit={onFit}
+          onToggleMode={onToggleMode}
+          onToggleRotated={onToggleRotated}
+          onToggleFlipY={onToggleFlipY}
+          onOpenSheet={onOpenSheet}
         />
-
-        {/* kingdom tallies */}
-        <div className="pointer-events-none absolute end-2 top-2 flex flex-col items-end gap-1">
-          {kingdomList.map((k) => (
-            <span
-              key={k.id}
-              className="mono max-w-32 truncate rounded-lg border bg-[var(--color-panel)]/95 px-2 py-1 text-xs backdrop-blur"
-              style={{ color: k.color }}
-            >
-              {kingdoms.shortOf(k.id)} {totals.byKingdom[k.id]}
-            </span>
-          ))}
-          <span className="mono rounded-lg border bg-[var(--color-panel)]/95 px-2 py-1 text-xs text-[var(--color-text-dim)] backdrop-blur">
-            — {totals.free}
-          </span>
-        </div>
       </div>
 
       <aside className="hidden min-h-0 flex-col bg-[var(--color-panel)] lg:flex">
@@ -357,6 +278,179 @@ export function MapScreen({
     </div>
   );
 }
+
+/**
+ * SVG map + chrome that only depends on the coarse map clock. Memoised so the
+ * panel's once-per-second tick does not rebuild the whole graph.
+ */
+const OwnershipMap = memo(function OwnershipMap({
+  nodes,
+  edges,
+  mapNow,
+  colorOf,
+  kingdomList,
+  shortOf,
+  rotated,
+  flipY,
+  mode,
+  fitToken,
+  selectedId,
+  selectedName,
+  onSelectNode,
+  onFit,
+  onToggleMode,
+  onToggleRotated,
+  onToggleFlipY,
+  onOpenSheet,
+}: {
+  nodes: NodeRow[];
+  edges: EdgeRow[];
+  mapNow: number;
+  colorOf: (owner: number | null) => string;
+  kingdomList: KingdomInfo[];
+  shortOf: (id: number) => string;
+  rotated: boolean;
+  flipY: boolean;
+  mode: MapMode;
+  fitToken: number;
+  selectedId: number | null;
+  selectedName: string | null;
+  onSelectNode: (id: number) => void;
+  onFit: () => void;
+  onToggleMode: () => void;
+  onToggleRotated: () => void;
+  onToggleFlipY: () => void;
+  onOpenSheet: () => void;
+}) {
+  const { t } = useT();
+
+  const styleFor = useCallback(
+    (node: NodeRow): NodeStyle => ({
+      fill: colorOf(node.owner),
+      ring: node.owner ? colorOf(node.owner) : null,
+      flag: isStale(node.checkedAt, mapNow),
+      shield: hasShield(node.shieldUntil, mapNow),
+    }),
+    [mapNow, colorOf],
+  );
+
+  const labelFor = useCallback(
+    (node: NodeRow) => {
+      const left = shieldSecondsLeft(node.shieldUntil, mapNow);
+      return left > 0 ? formatDuration(left) : null;
+    },
+    [mapNow],
+  );
+
+  const totals = useMemo(() => {
+    const byKingdom: Record<number, number> = Object.fromEntries(
+      kingdomList.map((k) => [k.id, 0]),
+    );
+    let free = 0;
+    let stale = 0;
+    for (const node of nodes) {
+      if (node.owner !== null && node.owner in byKingdom) {
+        byKingdom[node.owner] += 1;
+      } else {
+        free += 1;
+      }
+      if (isStale(node.checkedAt, mapNow)) stale += 1;
+    }
+    return { byKingdom, free, stale };
+  }, [nodes, mapNow, kingdomList]);
+
+  return (
+    <>
+      <MapCanvas
+        nodes={nodes}
+        edges={edges}
+        rotated={rotated}
+        flipY={flipY}
+        selectedId={selectedId}
+        onSelectNode={onSelectNode}
+        styleFor={styleFor}
+        labelFor={labelFor}
+        mode={mode}
+        fitToken={fitToken}
+        toolbar={
+          <>
+            <button className="btn !min-h-10 text-xs" onClick={onFit}>
+              <Crosshair size={14} />
+              {t("map.fit")}
+            </button>
+            <button
+              className={`btn !min-h-10 text-xs ${mode === "buff" ? "border-[var(--color-accent)]" : ""}`}
+              onClick={onToggleMode}
+              title={t("map.buffsHint")}
+            >
+              <Swords size={14} />
+              {t("map.buffs")}
+            </button>
+            <button
+              className={`btn !min-h-10 text-xs ${rotated ? "border-[var(--color-accent)]" : ""}`}
+              onClick={onToggleRotated}
+              title={t("map.rot45Hint")}
+            >
+              <RotateCcw size={14} />
+              {t("map.rot45")}
+            </button>
+            <button
+              className={`btn !min-h-10 text-xs ${flipY ? "border-[var(--color-accent)]" : ""}`}
+              onClick={onToggleFlipY}
+              title={t("map.flipYHint")}
+            >
+              {t("map.flipY")}
+            </button>
+            <button
+              className="btn !min-h-10 text-xs lg:hidden"
+              onClick={onOpenSheet}
+            >
+              <List size={14} />
+              {totals.stale > 0 && (
+                <span className="text-[var(--color-warn)]">{totals.stale}</span>
+              )}
+            </button>
+          </>
+        }
+        status={
+          selectedName ? (
+            <span className="flex items-center gap-2">
+              <b>{selectedName}</b>
+              <button
+                className="btn btn-ghost !min-h-8 !px-2 text-xs lg:hidden"
+                onClick={onOpenSheet}
+              >
+                {t("own.title")}
+              </button>
+            </span>
+          ) : (
+            <span className="text-[var(--color-text-soft)]">{t("map.ownHint")}</span>
+          )
+        }
+        empty={
+          <p className="text-sm text-[var(--color-text-dim)]">
+            {t("map.addNodesFirst")}
+          </p>
+        }
+      />
+
+      <div className="pointer-events-none absolute end-2 top-2 flex flex-col items-end gap-1">
+        {kingdomList.map((k) => (
+          <span
+            key={k.id}
+            className="mono max-w-32 truncate rounded-lg border bg-[var(--color-panel)]/95 px-2 py-1 text-xs backdrop-blur"
+            style={{ color: k.color }}
+          >
+            {shortOf(k.id)} {totals.byKingdom[k.id]}
+          </span>
+        ))}
+        <span className="mono rounded-lg border bg-[var(--color-panel)]/95 px-2 py-1 text-xs text-[var(--color-text-dim)] backdrop-blur">
+          — {totals.free}
+        </span>
+      </div>
+    </>
+  );
+});
 
 /**
  * One tap sets the owner — the whole point of this screen. No form, no
