@@ -1,0 +1,564 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import type { EdgeRow, NodeKind, NodeRow } from "@/db/schema";
+import { BUFF_COLOR } from "@/lib/constants";
+import { BUFF_ICONS, dominantBuff } from "./buff-icon";
+import { KIND_ICONS } from "./kind-icon";
+
+/**
+ * Shared map surface: coordinate layout, pan, wheel zoom, pinch zoom, and the
+ * node/road drawing. Both screens use it — `/links` to wire roads, `/map` to
+ * work with ownership — so the gesture handling exists once.
+ */
+
+type View = { x: number; y: number; w: number; h: number };
+type Pt = { node: NodeRow; px: number; py: number };
+
+/**
+ * What each node says about itself.
+ *
+ *   kind — the object: castle, gate, turret, crown for the throne in the middle
+ *   buff — what holding it grants: the buff glyph and its percent
+ *
+ * Ownership colour is the same in both, because "who holds it" is the question
+ * the map exists to answer and it never gets traded away for something else.
+ */
+export type MapMode = "kind" | "buff";
+
+export type NodeStyle = {
+  /** Mark fill. */
+  fill: string;
+  /** Ring drawn outside the mark, e.g. the owning kingdom. */
+  ring?: string | null;
+  /** Mark outline, used to pick out neighbours of the selection. */
+  outline?: string | null;
+  /** Yellow attention marker for data nobody has confirmed lately. */
+  flag?: boolean;
+  /** Translucent dome, drawn when a shield is up. */
+  shield?: boolean;
+};
+
+/** Screen-space radius of a node mark, in CSS pixels, per kind. */
+const MARK_PX: Record<NodeKind, number> = {
+  city: 11,
+  gate: 11,
+  turret: 10,
+  castle: 18,
+  base: 15,
+};
+
+/** Glyph drawn inside the disc, as a share of the disc's diameter. */
+const GLYPH_RATIO = 1.3;
+
+/** Ink for the glyph — dark enough to read on every palette colour. */
+const GLYPH_INK = "#0b0f17";
+
+/**
+ * Zoom thresholds, in map units per CSS pixel: below the first every node
+ * carries its full name, below the second only its level, and past that the
+ * glyphs carry the map alone.
+ *
+ * The map's closest neighbours sit ~37 units apart, so a name only has room
+ * around it below ~0.4 — measured, not guessed. Set it looser and the names
+ * overlap into an unreadable grey smear at exactly the zoom where the whole
+ * board is on screen.
+ */
+const NAME_UNTIL = 0.4;
+const LEVEL_UNTIL = 4.5;
+
+const MIN_W = 4;
+const MAX_W = 400_000;
+
+export function MapCanvas({
+  nodes,
+  edges,
+  rotated,
+  flipY,
+  selectedId,
+  onSelectNode,
+  onEdgeClick,
+  styleFor,
+  labelFor,
+  mode = "kind",
+  fitToken = 0,
+  toolbar,
+  status,
+  empty,
+}: {
+  nodes: NodeRow[];
+  edges: EdgeRow[];
+  rotated: boolean;
+  flipY: boolean;
+  selectedId: number | null;
+  onSelectNode: (id: number) => void;
+  onEdgeClick?: (edge: EdgeRow) => void;
+  styleFor: (node: NodeRow) => NodeStyle;
+  /** Extra text under the name, e.g. a shield countdown. */
+  labelFor?: (node: NodeRow) => string | null;
+  /** What the glyphs and labels describe. Defaults to the object itself. */
+  mode?: MapMode;
+  /** Bump to re-fit the view from outside. */
+  fitToken?: number;
+  toolbar?: React.ReactNode;
+  status?: React.ReactNode;
+  empty?: React.ReactNode;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 900, h: 600 });
+  const [view, setView] = useState<View>({ x: 0, y: 0, w: 100, h: 100 });
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  const pts = useMemo<Pt[]>(
+    () =>
+      nodes.map((node) => {
+        const px = rotated ? node.x - node.y : node.x;
+        const py = (rotated ? (node.x + node.y) / 2 : node.y) * (flipY ? -1 : 1);
+        return { node, px, py };
+      }),
+    [nodes, rotated, flipY],
+  );
+
+  const byId = useMemo(() => new Map(pts.map((p) => [p.node.id, p])), [pts]);
+
+  // Until the wrapper has been measured, `size` is a placeholder and any fit
+  // computed from it would frame the map against the wrong aspect.
+  const [measured, setMeasured] = useState(false);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const r = entry.contentRect;
+      if (!r.width || !r.height) return;
+      setSize({ w: r.width, h: r.height });
+      setMeasured(true);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const fit = useCallback(() => {
+    if (!pts.length) {
+      setView({ x: -50, y: -50, w: 100, h: (100 * size.h) / size.w });
+      return;
+    }
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of pts) {
+      minX = Math.min(minX, p.px);
+      maxX = Math.max(maxX, p.px);
+      minY = Math.min(minY, p.py);
+      maxY = Math.max(maxY, p.py);
+    }
+    const aspect = size.h / size.w;
+    let w = Math.max(maxX - minX, 1) * 1.3;
+    let h = Math.max(maxY - minY, 1) * 1.3;
+    if (h / w < aspect) h = w * aspect;
+    else w = h / aspect;
+    setView({
+      x: (minX + maxX) / 2 - w / 2,
+      y: (minY + maxY) / 2 - h / 2,
+      w,
+      h,
+    });
+  }, [pts, size]);
+
+  /**
+   * Re-fit only on the things that actually invalidate the framing — never on
+   * a plain resize. Someone who has zoomed in on a corner keeps it when the
+   * phone rotates or the sidebar opens, and a stray pixel of layout jitter
+   * can no longer throw the view around.
+   */
+  const fitKey = `${fitToken}|${rotated}|${flipY}|${nodes.length > 0}|${measured}`;
+  const lastFit = useRef("");
+  useEffect(() => {
+    if (lastFit.current === fitKey) return;
+    lastFit.current = fitKey;
+    fit();
+  }, [fitKey, fit]);
+
+  /**
+   * A resize still has to be honoured, or the map would stretch: the viewBox
+   * keeps its width and takes the container's aspect, growing or shrinking
+   * around the centre of what is on screen.
+   */
+  const aspect = size.h / Math.max(size.w, 1);
+  useEffect(() => {
+    setView((v) => {
+      const h = v.w * aspect;
+      if (Math.abs(h - v.h) < 1e-6) return v;
+      return { ...v, y: v.y + (v.h - h) / 2, h };
+    });
+  }, [aspect]);
+
+  /* ---------------- wheel zoom ---------------- */
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) / rect.width;
+      const my = (e.clientY - rect.top) / rect.height;
+      const factor = e.deltaY > 0 ? 1.18 : 1 / 1.18;
+      setView((v) => {
+        const w = Math.min(Math.max(v.w * factor, MIN_W), MAX_W);
+        const h = w * (v.h / v.w);
+        return { x: v.x + (v.w - w) * mx, y: v.y + (v.h - h) * my, w, h };
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  /* ---------------- drag & pinch ---------------- */
+
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const drag = useRef<{ sx: number; sy: number; vx: number; vy: number } | null>(
+    null,
+  );
+  const pinch = useRef<{
+    dist: number;
+    mx: number;
+    my: number;
+    view: View;
+  } | null>(null);
+  const moved = useRef(false);
+
+  function localXY(e: React.PointerEvent) {
+    const rect = wrapRef.current!.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  /**
+   * Capture is taken **only once a gesture is really under way**, never on the
+   * bare press.
+   *
+   * While an element holds the pointer capture the browser dispatches the
+   * `click` to *it* rather than to what was under the cursor, so capturing on
+   * pointerdown silently ate every node and road click on desktop — a phone
+   * still worked, because its click is synthesised from the touch sequence.
+   * Deferring it also lands the right behaviour for free: a press that turned
+   * into a drag has captured by then, so its click goes to the surface and
+   * selects nothing.
+   */
+  function capture(e: React.PointerEvent) {
+    const el = e.currentTarget as Element;
+    if (!el.hasPointerCapture(e.pointerId)) el.setPointerCapture(e.pointerId);
+  }
+
+  function onPointerDown(e: React.PointerEvent) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointers.current.set(e.pointerId, localXY(e));
+
+    if (pointers.current.size === 2) {
+      // A second finger is a pinch, never a click — safe to hold on to.
+      capture(e);
+      const [a, b] = [...pointers.current.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      pinch.current = {
+        dist,
+        mx: (a.x + b.x) / 2 / size.w,
+        my: (a.y + b.y) / 2 / size.h,
+        view: viewRef.current,
+      };
+      drag.current = null;
+      moved.current = true;
+      return;
+    }
+    if (pointers.current.size === 1) {
+      const v = viewRef.current;
+      drag.current = { sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
+      moved.current = false;
+    }
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, localXY(e));
+
+    const p = pinch.current;
+    if (p && pointers.current.size >= 2) {
+      const [a, b] = [...pointers.current.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const w = Math.min(Math.max((p.view.w * p.dist) / dist, MIN_W), MAX_W);
+      const h = w * (p.view.h / p.view.w);
+      // Keep whatever sat under the starting midpoint under the current one:
+      // pinch and two-finger pan in a single gesture.
+      const anchorX = p.view.x + p.view.w * p.mx;
+      const anchorY = p.view.y + p.view.h * p.my;
+      const cmx = (a.x + b.x) / 2 / size.w;
+      const cmy = (a.y + b.y) / 2 / size.h;
+      setView({ x: anchorX - w * cmx, y: anchorY - h * cmy, w, h });
+      return;
+    }
+
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.sx;
+    const dy = e.clientY - d.sy;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      // Past the slop threshold this is a pan, not a click: take the pointer
+      // so it keeps reporting once the cursor leaves the surface.
+      moved.current = true;
+      capture(e);
+    }
+    const v = viewRef.current;
+    setView({
+      ...v,
+      x: d.vx - (dx * v.w) / size.w,
+      y: d.vy - (dy * v.h) / size.h,
+    });
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    pointers.current.delete(e.pointerId);
+    const el = e.currentTarget as Element;
+    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+    if (pointers.current.size === 0) drag.current = null;
+  }
+
+  /**
+   * A press that never became a drag holds no capture, so releasing it outside
+   * the surface produces no pointerup here. Forget it on the way out, or the
+   * next press would look like a second finger and start a phantom pinch.
+   */
+  function onPointerLeave(e: React.PointerEvent) {
+    if ((e.currentTarget as Element).hasPointerCapture(e.pointerId)) return;
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+    if (pointers.current.size === 0) drag.current = null;
+  }
+
+  /** SVG units per CSS pixel — keeps marks and labels a constant screen size. */
+  const k = view.w / Math.max(size.w, 1);
+  const detail = k < NAME_UNTIL ? "full" : k < LEVEL_UNTIL ? "compact" : "none";
+
+  return (
+    <div className="relative h-full w-full" ref={wrapRef}>
+      {/*
+        Absolutely positioned on purpose. An in-flow <svg> with a viewBox has
+        an *intrinsic aspect ratio*, so it reports a content height — and this
+        one's aspect changes every time the view does. In flow that closes a
+        loop: taller svg -> page scrollbar -> 10px narrower -> re-fit -> new
+        aspect -> shorter svg -> no scrollbar -> wider -> ... The map visibly
+        pumped in and out forever. Out of flow it can only ever be the size
+        this wrapper already is.
+      */}
+      <svg
+        className="absolute inset-0 h-full w-full touch-none select-none"
+        viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerLeave={onPointerLeave}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <g>
+          {edges.map((edge) => {
+            const a = byId.get(edge.aId);
+            const b = byId.get(edge.bId);
+            if (!a || !b) return null;
+            const touches =
+              selectedId === edge.aId || selectedId === edge.bId;
+            return (
+              <g key={`${edge.aId}-${edge.bId}`}>
+                <line
+                  x1={a.px}
+                  y1={a.py}
+                  x2={b.px}
+                  y2={b.py}
+                  stroke={touches ? "#38bdf8" : "#3f4d69"}
+                  strokeWidth={(touches ? 4.8 : 3) * k}
+                  strokeLinecap="round"
+                />
+                {onEdgeClick && (
+                  // Wide invisible line so a road is tappable on a phone.
+                  <line
+                    x1={a.px}
+                    y1={a.py}
+                    x2={b.px}
+                    y2={b.py}
+                    stroke="transparent"
+                    strokeWidth={14 * k}
+                    strokeLinecap="round"
+                    style={{ cursor: "pointer" }}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (moved.current) return;
+                      onEdgeClick(edge);
+                    }}
+                  />
+                )}
+              </g>
+            );
+          })}
+        </g>
+
+        <g>
+          {pts.map(({ node, px, py }) => {
+            const s = styleFor(node);
+            const isSel = selectedId === node.id;
+            const buff = mode === "buff" ? dominantBuff(node) : null;
+            // In buff mode a node that grants nothing shrinks out of the way:
+            // the whole point of the view is spotting what is worth taking.
+            const r =
+              MARK_PX[node.kind] * k * (mode === "buff" && !buff ? 0.45 : 1);
+            const Glyph: LucideIcon | null =
+              mode === "buff"
+                ? buff && BUFF_ICONS[buff.field]
+                : KIND_ICONS[node.kind];
+            const extra = labelFor?.(node) ?? null;
+
+            return (
+              <g
+                key={node.id}
+                transform={`translate(${px} ${py})`}
+                style={{ cursor: "pointer" }}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  if (moved.current) return;
+                  onSelectNode(node.id);
+                }}
+              >
+                {s.shield && (
+                  <circle
+                    r={r * 2.3}
+                    fill="#38bdf8"
+                    fillOpacity={0.16}
+                    stroke="#7dd3fc"
+                    strokeWidth={1.2 * k}
+                  />
+                )}
+                {isSel && (
+                  <circle
+                    r={r * 2.7}
+                    fill="none"
+                    stroke="#38bdf8"
+                    strokeWidth={1.8 * k}
+                    strokeDasharray={`${3 * k} ${2.5 * k}`}
+                  />
+                )}
+                {s.ring && (
+                  <circle
+                    r={r * 1.55}
+                    fill="none"
+                    stroke={s.ring}
+                    strokeWidth={2 * k}
+                  />
+                )}
+                {/* Disc carries the colour, glyph carries the meaning. */}
+                <circle
+                  r={r}
+                  fill={s.fill}
+                  stroke={s.outline ?? "#0b0f17"}
+                  strokeWidth={1.6 * k}
+                />
+                {Glyph && (
+                  <Glyph
+                    x={-r * (GLYPH_RATIO / 2)}
+                    y={-r * (GLYPH_RATIO / 2)}
+                    width={r * GLYPH_RATIO}
+                    height={r * GLYPH_RATIO}
+                    color={GLYPH_INK}
+                    strokeWidth={2.4}
+                    style={{ pointerEvents: "none" }}
+                  />
+                )}
+                {s.flag && (
+                  <g transform={`translate(${r * 1.5} ${-r * 1.6})`}>
+                    <circle r={5.5 * k} fill="#eab308" stroke="#0b0f17" strokeWidth={k} />
+                    <text
+                      y={2 * k}
+                      textAnchor="middle"
+                      fontSize={8 * k}
+                      fontWeight="700"
+                      fill="#0b0f17"
+                      style={{ pointerEvents: "none" }}
+                    >
+                      !
+                    </text>
+                  </g>
+                )}
+                {/* Finger-sized hit area, whatever the mark is doing. */}
+                <circle r={Math.max(r * 1.6, 22 * k)} fill="transparent" />
+
+                {mode === "buff"
+                  ? buff &&
+                    detail !== "none" && (
+                      // The percent *is* the label here, and it is short
+                      // enough to survive as far out as a level does.
+                      <text
+                        y={r + 15 * k}
+                        textAnchor="middle"
+                        fontSize={14 * k}
+                        fontWeight="700"
+                        fill={BUFF_COLOR[buff.field]}
+                        style={{ pointerEvents: "none" }}
+                      >
+                        {buff.value}%
+                      </text>
+                    )
+                  : detail !== "none" && (
+                      <text
+                        y={r + 15 * k}
+                        textAnchor="middle"
+                        fontSize={13 * k}
+                        fill={isSel ? "#e6ebf5" : "#94a3b8"}
+                        style={{ pointerEvents: "none" }}
+                      >
+                        {detail === "full" ? (
+                          <>
+                            {node.name}
+                            <tspan fill="#64748b"> {node.level}</tspan>
+                            {extra && (
+                              <tspan x={0} dy={14 * k} fill="#7dd3fc">
+                                {extra}
+                              </tspan>
+                            )}
+                          </>
+                        ) : (
+                          // Zoomed out the name is unreadable anyway; the
+                          // level is what you scan the map for.
+                          <tspan fontWeight="700" fill="#8fa3bf">
+                            {node.level}
+                          </tspan>
+                        )}
+                      </text>
+                    )}
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+
+      {toolbar && (
+        <div className="absolute start-2 top-2 flex flex-wrap gap-1.5">
+          {toolbar}
+        </div>
+      )}
+
+      {status && (
+        <div className="pointer-events-none absolute bottom-2 start-2 end-2 flex justify-center">
+          <div className="pointer-events-auto max-w-full rounded-lg border bg-[var(--color-panel)]/95 px-3 py-2 text-xs backdrop-blur">
+            {status}
+          </div>
+        </div>
+      )}
+
+      {nodes.length === 0 && empty && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          {empty}
+        </div>
+      )}
+    </div>
+  );
+}
+

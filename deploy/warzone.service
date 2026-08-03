@@ -1,0 +1,28 @@
+# systemd unit — keeps the Next.js app running and restarts it on crash/reboot.
+# Install:
+#   sudo cp deploy/warzone.service /etc/systemd/system/warzone.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now warzone
+#
+# Adjust User= and WorkingDirectory= if your droplet layout differs.
+
+[Unit]
+Description=War Eternal — WarZone (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/var/www/warzone
+Environment=NODE_ENV=production
+Environment=PORT=3002
+# Next.js loads .env.local from the working directory automatically.
+ExecStart=/usr/bin/npm run start -- --port 3002
+Restart=always
+RestartSec=5
+
+# SQLite lives on disk; give the process a clean stop so WAL can settle.
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

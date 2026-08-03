@@ -1,0 +1,27 @@
+node_modules
+.next
+out
+build
+
+# Local data — the map DB is server state, never commit it
+*.db
+*.db-shm
+*.db-wal
+data/
+
+.env
+.env.local
+.env*.local
+.env.production
+.env.production.local
+
+next-env.d.ts
+tsconfig.tsbuildinfo
+.DS_Store
+.idea
+
+# Local editor / agent noise
+*.pem
+*.key
+.vscode/
+.cursor/

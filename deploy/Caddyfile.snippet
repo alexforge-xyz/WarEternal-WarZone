@@ -1,0 +1,22 @@
+# Append this block to /etc/caddy/Caddyfile on the droplet, then:
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# DNS first: A (and optional AAAA) for warzone.alexforge.xyz → droplet IP.
+# If you use Cloudflare, either DNS-only (grey cloud) for the first cert
+# issue, or use a Cloudflare TLS mode that still lets Caddy terminate HTTPS.
+#
+# Port map on this box (do not collide):
+#   :3000  — existing site A
+#   :3001  — existing site B
+#   :3002  — WarZone (this app)
+
+warzone.alexforge.xyz {
+	encode zstd gzip
+	reverse_proxy localhost:3002
+}
+
+# Optional www → apex-style host for this subdomain
+www.warzone.alexforge.xyz {
+	redir https://warzone.alexforge.xyz{uri} permanent
+}
