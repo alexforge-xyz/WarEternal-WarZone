@@ -83,6 +83,23 @@ export async function getRole(): Promise<Role> {
 }
 
 /**
+ * Read a secret from the environment. Trims whitespace and optional wrapping
+ * quotes so `.env` / systemd `EnvironmentFile` quirks do not block first login.
+ */
+function envCredential(name: string): string | null {
+  const raw = process.env[name];
+  if (raw == null) return null;
+  let v = raw.trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"') && v.length >= 2) ||
+    (v.startsWith("'") && v.endsWith("'") && v.length >= 2)
+  ) {
+    v = v.slice(1, -1);
+  }
+  return v.length > 0 ? v : null;
+}
+
+/**
  * First-run bootstrap: while the users table is empty, the credentials in
  * ADMIN_NICK / ADMIN_PASSWORD create the admin account. Once that account
  * exists the env values are ignored, so there is no permanent backdoor.
@@ -91,20 +108,20 @@ async function bootstrapAdmin(
   nick: string,
   password: string,
 ): Promise<UserRow | null> {
-  const envNick = process.env.ADMIN_NICK;
-  const envPass = process.env.ADMIN_PASSWORD;
+  const envNick = envCredential("ADMIN_NICK");
+  const envPass = envCredential("ADMIN_PASSWORD");
   if (!envNick || !envPass) return null;
 
   const [existing] = await db.select({ id: users.id }).from(users).limit(1);
   if (existing) return null;
 
-  if (nick.trim().toLowerCase() !== envNick.trim().toLowerCase()) return null;
+  if (nick.trim().toLowerCase() !== envNick.toLowerCase()) return null;
   if (password !== envPass) return null;
 
   const [row] = await db
     .insert(users)
     .values({
-      nick: envNick.trim(),
+      nick: envNick,
       passwordHash: await hashPassword(envPass),
       role: "admin",
     })

@@ -4,7 +4,7 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now warzone
 #
-# Adjust User= and WorkingDirectory= if your droplet layout differs.
+# Adjust User= / paths if your droplet layout differs.
 
 [Unit]
 Description=War Eternal — WarZone (Next.js)
@@ -16,7 +16,10 @@ User=deploy
 WorkingDirectory=/var/www/warzone
 Environment=NODE_ENV=production
 Environment=PORT=3002
-# Next.js loads .env.local from the working directory automatically.
+# Load secrets into the process (Next also reads .env.local; this is belt+suspenders
+# so ADMIN_* / SESSION_SECRET / SQLITE_PATH are definitely present at runtime).
+# Leading `-` = missing file is not fatal.
+EnvironmentFile=-/var/www/warzone/.env.local
 ExecStart=/usr/bin/npm run start -- --port 3002
 Restart=always
 RestartSec=5
