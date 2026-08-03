@@ -108,6 +108,18 @@ export const nodes = sqliteTable(
      */
     shieldUntil: integer("shield_until"),
 
+    /**
+     * When somebody reported a fight here — a moment, not a flag, for the same
+     * reason `shieldUntil` is one: officers need to know *how long* it has
+     * been contested, and a stale "battle" that nobody cleared has to be
+     * visible as stale rather than pass for news.
+     *
+     * Unlike a shield this has no end time, because nothing in the game
+     * announces one. It is cleared by hand, or by recording who took the node
+     * — that *is* the fight ending. null = quiet.
+     */
+    battleSince: integer("battle_since"),
+
     notes: text("notes"),
 
     createdAt: integer("created_at")
@@ -167,7 +179,7 @@ export const changes = sqliteTable(
   (t) => [index("changes_at").on(t.at), index("changes_node").on(t.nodeId)],
 );
 
-export const CHANGE_KINDS = ["owner", "confirm", "shield"] as const;
+export const CHANGE_KINDS = ["owner", "confirm", "shield", "battle"] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 
 export type ChangeRow = typeof changes.$inferSelect;

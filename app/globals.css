@@ -144,3 +144,64 @@ select.field {
   scrollbar-width: thin;
   scrollbar-color: var(--color-line) transparent;
 }
+
+/*
+  Crossed swords on a node that is being fought over.
+
+  The two blades pivot about the same point and scissor open and shut, which
+  is the whole animation — no glow, no pulse, no filter. A filter here would
+  re-rasterise on every frame of a pan on a phone, and the map has to stay
+  smooth while somebody is reading it mid-battle.
+
+  The swords live in a nested `<svg viewBox="0 0 24 24">` per node, so
+  `transform-origin` can be stated in that box's own units and lands on the
+  guard no matter where the node sits or how far the map is zoomed.
+*/
+@keyframes wz-sword-a {
+  from {
+    transform: rotate(-18deg);
+  }
+  to {
+    transform: rotate(-58deg);
+  }
+}
+
+@keyframes wz-sword-b {
+  from {
+    transform: rotate(18deg);
+  }
+  to {
+    transform: rotate(58deg);
+  }
+}
+
+.wz-sword {
+  transform-origin: 12px 12px;
+  animation-duration: 2.6s;
+  /* Eased at both ends, and `alternate` so the way back is the way out
+     reversed — the blades never snap back to the start. */
+  animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+
+.wz-sword-a {
+  animation-name: wz-sword-a;
+}
+
+.wz-sword-b {
+  animation-name: wz-sword-b;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Frozen mid-cross: still unmistakably crossed swords, just still. */
+  .wz-sword {
+    animation: none;
+  }
+  .wz-sword-a {
+    transform: rotate(-26deg);
+  }
+  .wz-sword-b {
+    transform: rotate(26deg);
+  }
+}

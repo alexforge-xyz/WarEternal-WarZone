@@ -21,17 +21,19 @@ import {
 import {
   clearShield,
   confirmNode,
+  setBattle,
   setOwner,
   setShield,
 } from "@/app/actions/ownership";
-import { KIND_KEY, kingdomShort } from "@/lib/constants";
+import { BATTLE_COLOR, KIND_KEY, kingdomShort } from "@/lib/constants";
 import type { EdgeRow, NodeRow } from "@/db/schema";
 import {
   STALE_AFTER_HOURS,
   formatAgo,
   formatDuration,
+  formatDurationShort,
   hasShield,
-  isStale,
+  needsCheck,
   shieldSecondsLeft,
 } from "@/lib/staleness";
 import { useT } from "./i18n-provider";
@@ -121,7 +123,8 @@ export function MapScreen({
   const listed = useMemo(() => {
     const q = query.trim().toLowerCase();
     return nodes.filter((node) => {
-      if (onlyStale && !isStale(node.checkedAt, now)) return false;
+      if (onlyStale && !needsCheck(node.checkedAt, node.shieldUntil, now))
+        return false;
       if (!q) return true;
       return (
         node.name.toLowerCase().includes(q) || `${node.x}:${node.y}`.includes(q)
@@ -132,7 +135,8 @@ export function MapScreen({
   // Stale count for the filter chip — fine-grained is fine here (list, not SVG).
   const staleCount = useMemo(() => {
     let n = 0;
-    for (const node of nodes) if (isStale(node.checkedAt, now)) n += 1;
+    for (const node of nodes)
+      if (needsCheck(node.checkedAt, node.shieldUntil, now)) n += 1;
     return n;
   }, [nodes, now]);
 
@@ -185,7 +189,7 @@ export function MapScreen({
 
       <ul className="min-h-0 flex-1 overflow-y-auto p-2">
         {listed.map((node) => {
-          const stale = isStale(node.checkedAt, now);
+          const stale = needsCheck(node.checkedAt, node.shieldUntil, now);
           const left = shieldSecondsLeft(node.shieldUntil, now);
           return (
             <li key={node.id}>
@@ -201,6 +205,14 @@ export function MapScreen({
                 />
                 <KindIcon kind={node.kind} size={14} />
                 <span className="min-w-0 flex-1 truncate">{node.name}</span>
+                {node.battleSince !== null && (
+                  <Swords
+                    size={13}
+                    className="shrink-0"
+                    style={{ color: BATTLE_COLOR }}
+                    aria-label={t("battle.title")}
+                  />
+                )}
                 {left > 0 && (
                   <span className="mono text-[10px] text-[#7dd3fc]">
                     {formatDuration(left)}
@@ -348,8 +360,12 @@ const OwnershipMap = memo(function OwnershipMap({
     (node: NodeRow): NodeStyle => ({
       fill: colorOf(node.owner),
       ring: node.owner ? colorOf(node.owner) : null,
-      flag: isStale(node.checkedAt, mapNow),
+      flag: needsCheck(node.checkedAt, node.shieldUntil, mapNow),
       shield: hasShield(node.shieldUntil, mapNow),
+      battle: node.battleSince !== null,
+      // Unowned nodes stain nothing: empty ground is the thing an officer is
+      // looking for on the wide view, so it has to stay visibly empty.
+      zone: node.owner ? colorOf(node.owner) : null,
     }),
     [mapNow, colorOf],
   );
@@ -357,7 +373,7 @@ const OwnershipMap = memo(function OwnershipMap({
   const labelFor = useCallback(
     (node: NodeRow) => {
       const left = shieldSecondsLeft(node.shieldUntil, mapNow);
-      return left > 0 ? formatDuration(left) : null;
+      return left > 0 ? formatDurationShort(left) : null;
     },
     [mapNow],
   );
@@ -374,7 +390,7 @@ const OwnershipMap = memo(function OwnershipMap({
       } else {
         free += 1;
       }
-      if (isStale(node.checkedAt, mapNow)) stale += 1;
+      if (needsCheck(node.checkedAt, node.shieldUntil, mapNow)) stale += 1;
     }
     return { byKingdom, free, stale };
   }, [nodes, mapNow, kingdomList]);
@@ -391,6 +407,7 @@ const OwnershipMap = memo(function OwnershipMap({
         styleFor={styleFor}
         labelFor={labelFor}
         mode={mode}
+        territory
         fitToken={fitToken}
         toolbar={
           <>
@@ -531,8 +548,9 @@ function NodePanel({
   const [minutes, setMinutes] = useState("");
 
   const left = shieldSecondsLeft(node.shieldUntil, now);
-  const stale = isStale(node.checkedAt, now);
+  const stale = needsCheck(node.checkedAt, node.shieldUntil, now);
   const ago = node.checkedAt ? now - node.checkedAt : null;
+  const battleSince = node.battleSince;
 
   return (
     <div className="border-b p-3">
@@ -609,6 +627,49 @@ function NodePanel({
           : t("own.checked", { ago: formatAgo(ago) })}
         {stale && ` · ${t("own.stale", { h: STALE_AFTER_HOURS })}`}
       </p>
+
+      {/* Above the shield: a fight is the thing that is happening right now,
+          a shield is the thing that already settled. */}
+      <div
+        className="mt-3 rounded-lg border p-2"
+        style={battleSince !== null ? { borderColor: BATTLE_COLOR } : undefined}
+      >
+        <p className="label">{t("battle.title")}</p>
+        {battleSince !== null ? (
+          <p className="mono text-sm" style={{ color: BATTLE_COLOR }}>
+            {t("battle.since", { time: formatAgo(now - battleSince) })}
+          </p>
+        ) : (
+          <p className="text-xs text-[var(--color-text-dim)]">
+            {t("battle.none")}
+          </p>
+        )}
+        {!readOnly && (
+          <>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                run(() => void setBattle(node.id, battleSince === null, who))
+              }
+              className="btn mt-2 min-h-11 w-full text-xs"
+              style={
+                battleSince === null
+                  ? undefined
+                  : { borderColor: BATTLE_COLOR, color: BATTLE_COLOR }
+              }
+            >
+              <Swords size={14} />
+              {battleSince === null ? t("battle.start") : t("battle.stop")}
+            </button>
+            {battleSince !== null && (
+              <p className="mt-1 text-[11px] text-[var(--color-text-dim)]">
+                {t("battle.hint")}
+              </p>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="mt-3 rounded-lg border p-2">
         <p className="label">{t("shield.title")}</p>

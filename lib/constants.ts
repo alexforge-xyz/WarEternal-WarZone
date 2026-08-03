@@ -56,6 +56,14 @@ export const KINGDOM_PALETTE = [
 /** Anything unowned, and the fallback for a colour that failed validation. */
 export const NEUTRAL_COLOR = "#64748b";
 
+/**
+ * A fight in progress. Deliberately outside `KINGDOM_PALETTE` — the crossed
+ * swords are drawn over a node's disc, and a hue a kingdom could also be
+ * wearing would read as "this node is orange" rather than "this node is
+ * under attack".
+ */
+export const BATTLE_COLOR = "#ff6b3d";
+
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
 export function isHexColor(v: string): boolean {

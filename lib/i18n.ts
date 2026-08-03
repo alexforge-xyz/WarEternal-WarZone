@@ -120,6 +120,7 @@ const ru = {
 
   "nav.map": "Карта",
   "nav.stats": "Статистика",
+  "nav.language": "Язык",
 
   "auth.login": "Вход",
   "auth.logout": "Выйти",
@@ -201,6 +202,13 @@ const ru = {
   "shield.hours": "ч",
   "shield.minutes": "мин",
   "shield.left": "Щит спадёт через {time}",
+
+  "battle.title": "Бой",
+  "battle.none": "Боя нет",
+  "battle.start": "Идёт бой",
+  "battle.stop": "Бой окончен",
+  "battle.since": "Бой идёт {time}",
+  "battle.hint": "Снимется само, когда отметишь владельца",
 
   "stats.stale": "На проверку",
 
@@ -354,6 +362,7 @@ const en: Record<MessageKey, string> = {
 
   "nav.map": "Map",
   "nav.stats": "Stats",
+  "nav.language": "Language",
 
   "auth.login": "Sign in",
   "auth.logout": "Sign out",
@@ -435,6 +444,13 @@ const en: Record<MessageKey, string> = {
   "shield.hours": "h",
   "shield.minutes": "min",
   "shield.left": "Shield drops in {time}",
+
+  "battle.title": "Battle",
+  "battle.none": "No battle",
+  "battle.start": "Battle underway",
+  "battle.stop": "Battle over",
+  "battle.since": "Fighting for {time}",
+  "battle.hint": "Clears itself once you record the owner",
 
   "stats.stale": "To check",
 
@@ -583,6 +599,7 @@ const ar: Record<MessageKey, string> = {
 
   "nav.map": "الخريطة",
   "nav.stats": "الإحصائيات",
+  "nav.language": "اللغة",
 
   "auth.login": "تسجيل الدخول",
   "auth.logout": "تسجيل الخروج",
@@ -664,6 +681,13 @@ const ar: Record<MessageKey, string> = {
   "shield.hours": "س",
   "shield.minutes": "د",
   "shield.left": "يسقط الدرع خلال {time}",
+
+  "battle.title": "معركة",
+  "battle.none": "لا توجد معركة",
+  "battle.start": "معركة جارية",
+  "battle.stop": "انتهت المعركة",
+  "battle.since": "القتال مستمر منذ {time}",
+  "battle.hint": "يُزال تلقائيًا عند تسجيل المالك",
 
   "stats.stale": "للتحقق",
 

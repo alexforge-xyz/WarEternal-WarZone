@@ -178,9 +178,20 @@ After the admin row exists, env bootstrap credentials are **ignored**.
 cd /var/www/warzone
 git pull
 npm ci
+npm run db:push
 npm run build
 sudo systemctl restart warzone
 ```
+
+`db:push` brings the live database up to the schema in the code. It is a no-op
+when nothing changed, so it belongs in the routine rather than in somebody's
+memory: a release that adds a column and skips it takes the site down on the
+first query. Run it **before** `npm run build` — the build opens the database.
+
+> `drizzle-kit push` asks a question when it cannot tell a rename from a
+> drop-and-add, and there is no TTY here to answer it. Adding or removing a
+> column is decided without asking; if a release renames one, run the push from
+> an interactive shell and read what it proposes before saying yes.
 
 Database file is outside git (`data/warzone.db`) — `git pull` does not wipe
 ownership. Still take a copy before big upgrades:

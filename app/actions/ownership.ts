@@ -56,9 +56,13 @@ export async function setOwner(
   if (!current) return { ok: false, error: "err.bad_id" };
 
   const at = nowSeconds();
+  // Recording who holds it is how a fight ends, so the battle mark comes off
+  // with the same tap. Leaving it to a second button would mean every taken
+  // node stayed "under attack" until somebody remembered — and a marker that
+  // is usually wrong is worse than none.
   await db
     .update(nodes)
-    .set({ owner: owner as Kingdom | null, checkedAt: at })
+    .set({ owner: owner as Kingdom | null, checkedAt: at, battleSince: null })
     .where(eq(nodes.id, nodeId));
 
   if (current.owner !== owner) {
@@ -146,4 +150,36 @@ export async function clearShield(
   by?: string | null,
 ): Promise<ActionState> {
   return setShield(nodeId, 0, 0, 0, by);
+}
+
+/**
+ * Flag a node as being fought over, or call the fight off.
+ *
+ * Deliberately not a duration: nothing in the game says how long a battle
+ * runs, so guessing one would put a countdown on the map that means nothing.
+ * `setOwner` clears it, which is the path this normally leaves by.
+ *
+ * Turning it on refreshes `checkedAt` — somebody just looked at the node,
+ * which is exactly what that field records.
+ */
+export async function setBattle(
+  nodeId: number,
+  on: boolean,
+  by?: string | null,
+): Promise<ActionState> {
+  const denied = await guard();
+  if (denied) return denied;
+  if (!Number.isInteger(nodeId)) return { ok: false, error: "err.bad_id" };
+
+  const at = nowSeconds();
+  await db
+    .update(nodes)
+    .set({ battleSince: on ? at : null, checkedAt: at })
+    .where(eq(nodes.id, nodeId));
+  await db
+    .insert(changes)
+    .values({ nodeId, kind: "battle", by: author(by), at });
+
+  revalidate();
+  return { ok: true };
 }
