@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   description: `Privacy policy for ${PROJECT_NAME} (${BRAND}).`,
 };
 
-const UPDATED = "3 August 2026";
+const UPDATED = "4 August 2026";
 
 export default function PrivacyPage() {
   return (
@@ -30,7 +30,8 @@ export default function PrivacyPage() {
         The Service is a fan-made coordination tool for the{" "}
         <strong>{EVENT_NAME}</strong> event in <strong>{GAME_NAME}</strong>. Map
         data is entered by hand; there is no connection to the game’s official
-        APIs.
+        APIs. Officers may also use an invite-only <strong>war room</strong>:
+        chat, shared capture trails on the map, and node notes for planning.
       </p>
 
       <h2>1. Data controller</h2>
@@ -63,8 +64,34 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Map contribution metadata</strong>: who changed ownership,
-          confirmations or shields (stored as a nickname for coordination), and
-          free-text notes officers may attach to map nodes.
+          confirmations, shields or battle marks (stored as a nickname for
+          coordination), and free-text notes officers may attach to map nodes.
+        </li>
+        <li>
+          <strong>War room chat</strong> (officers and admin only): message
+          text, author account id (when available), author nickname (stored on
+          the message so history stays readable if an account is later
+          disabled), optional pin to a map node, and the time the line was
+          sent. Chat is stored in the same server database as the map so other
+          officers can read recent history when they open the room. Guests and
+          helpers cannot open the war room or receive chat events.
+        </li>
+        <li>
+          <strong>War room capture plan</strong> (officers and admin only):
+          shared trail data (ordered map-node ids forming capture paths), which
+          kingdom the room routes from (planning kingdom setting, edited by
+          admins), and free-text <strong>plan notes</strong> officers attach to
+          nodes (shown as markers on the war-room map). This is coordination
+          data about the game map, not a separate social profile. Live trail
+          updates may be pushed over the same event stream as the map.
+        </li>
+        <li>
+          <strong>Live “typing” signals</strong> (officers and admin only):
+          while you compose a war-room message, the Service may briefly push
+          your nickname to other open war-room tabs so they can show “is
+          typing…”. These pulses are <strong>not stored</strong> in the
+          database; they exist only in the live connection and disappear within
+          seconds if you stop typing, send, or leave.
         </li>
         <li>
           <strong>Account audit log</strong>: actions such as invites or
@@ -72,7 +99,7 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Technical data for abuse protection</strong>: IP address used
-          for rate limiting on sign-in / join, and verification through
+          for rate limiting on sign-in / join / chat, and verification through
           Cloudflare Turnstile when that feature is enabled.
         </li>
         <li>
@@ -83,20 +110,22 @@ export default function PrivacyPage() {
       </ul>
       <p>
         Guests can view the map and statistics without an account. Viewing alone
-        does not create a user profile.
+        does not create a user profile. The war room and chat require an invited
+        officer or admin session.
       </p>
 
       <h2>3. Purposes and legal bases (GDPR)</h2>
       <ul>
         <li>
           <strong>Providing the Service</strong> (accounts, map editing,
-          sessions, language): performance of a service you request / legitimate
-          interest in running a small fan coordination tool.
+          sessions, language, war-room chat, shared capture trails and plan
+          notes among officers): performance of a service you request /
+          legitimate interest in running a small fan coordination tool.
         </li>
         <li>
           <strong>Security</strong> (rate limits, Turnstile, session integrity,
-          disabling abusive accounts): legitimate interest in protecting the
-          Service and its users.
+          disabling abusive accounts, chat abuse limits): legitimate interest in
+          protecting the Service and its users.
         </li>
         <li>
           <strong>Legal obligations</strong>: where we must respond to a valid
@@ -105,7 +134,7 @@ export default function PrivacyPage() {
       </ul>
       <p>
         We do not sell personal data and we do not use it for advertising
-        profiles.
+        profiles. We do not use chat content for advertising or profiling.
       </p>
 
       <h2>4. Cookies</h2>
@@ -139,11 +168,14 @@ export default function PrivacyPage() {
         <li>
           <strong>Invite-only teammates:</strong> officers/admins may see
           nicknames, roles and related team fields needed to run the map.
+          Officers and admins who can open the war room also see chat history,
+          the shared capture plan, plan notes, and live typing indicators for
+          that room.
         </li>
       </ul>
       <p>
         Data is stored in a database file on the application server. We do not
-        share account data with the game publisher.
+        share account or chat data with the game publisher.
       </p>
 
       <h2>6. International transfers</h2>
@@ -171,6 +203,25 @@ export default function PrivacyPage() {
         <li>
           <strong>Map change / audit logs:</strong> kept for operational history
           of events; may be purged when no longer needed.
+        </li>
+        <li>
+          <strong>War room chat:</strong> kept while useful for ongoing event
+          coordination (same server database as the map). Lines may be purged
+          when no longer needed for operations, or earlier on a valid deletion
+          request where feasible. The UI only loads a recent tail by default;
+          older lines may still exist in the database until purged.
+        </li>
+        <li>
+          <strong>War room plan (trails, planning kingdom, plan notes):</strong>{" "}
+          kept while useful for the current event coordination; may be cleared
+          by officers through the product UI (for example clearing the plan or
+          deleting a note) or purged with other operational data when no longer
+          needed. Trails and notes are shared among officers, not private
+          messages to the publisher alone.
+        </li>
+        <li>
+          <strong>Typing indicators:</strong> not retained; seconds only, in
+          memory / live push.
         </li>
         <li>
           <strong>Rate-limit / short-lived security data:</strong> short windows
@@ -208,9 +259,12 @@ export default function PrivacyPage() {
       <h2>9. Security</h2>
       <p>
         We use HTTPS, hashed passwords, signed session cookies and role checks
-        on server actions. No method of transmission or storage is perfectly
-        secure; please choose a unique password and do not reuse credentials
-        from the game or other sites.
+        on server actions and live streams (for example, chat and plan events
+        are not sent to guests or helpers). No method of transmission or storage
+        is perfectly secure; please choose a unique password and do not reuse
+        credentials from the game or other sites. Treat war-room chat, trails
+        and plan notes as shared with other officers — do not post secrets you
+        would not say in a private officers’ channel.
       </p>
 
       <h2>10. Children</h2>

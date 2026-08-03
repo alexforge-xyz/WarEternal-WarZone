@@ -38,39 +38,54 @@ Open http://localhost:3000
 
 ## Screens
 
-### `/` — Nodes
+| Route | What | Who |
+|---|---|---|
+| `/` | Live conquest map: ownership, shields, battle marks, “checked” | view — everyone; edit status — helper+ |
+| `/war-room` | **War room**: chat, shared capture trails, node notes, plan totals | officer+ |
+| `/stats` | Kingdom scoreboard: nodes, yield, buffs | everyone |
+| `/nodes` | Node table + form + kingdoms panel | view — everyone; edit — admin |
+| `/links` | Road editor | admin |
+| `/team` | Accounts, invites, audit log | officer+ |
+| `/login`, `/join/[token]` | Sign-in and invite registration | — |
 
-Create and edit map objects: name, coordinates, type (city / gate / turret /
-main castle / kingdom base), level, buffs (attack / defence / HP in percent),
-notes.
+`/map` redirects to `/` (old bookmark).
+
+### `/` — Live map (daily use)
+
+Who holds what, shield timers, battle marks, one-tap ownership updates for
+helpers and officers. Live refresh over SSE (`/api/live` + `/api/map`).
 
 **Crystal yield is not entered by hand** — it is derived (see below).
 **The map ships preloaded**: an empty database boots with 231 nodes and 352
-roads, all unowned. Editing is admin-only; viewing is open.
+roads, all unowned.
 
-After save, the form keeps the selected type and focuses the name field so
-same-kind entries go faster. The **Links** column shows how many roads touch a
-node; the **Unlinked** filter shows nodes with no roads yet.
+### `/war-room` — War room (officer+)
 
-### Kingdoms panel (admin)
+Shared planning room: **chat + capture trails** on a read-only map. Ownership
+is still written only on `/` (one authoritative place, one-tap updates).
 
-The kingdom line-up changes between events, so it is edited here rather than
-hard-coded: in-game number, custom name instead of “Kingdom N”, colour from the
-palette, and which base the kingdom sits on. Renaming **does not drop
-ownership** — everything references a stable internal slot, not the number.
+- **Chat** on the server; pin a line to a node (chip in chat jumps the map).
+  Live “is typing…” (not stored). No yellow outline on the board for pins.
+- **Trails:** short tap enemy → shortest path from the planning kingdom’s
+  nodes; tap the tip again to remove. Long-press / right-click → add/remove
+  from plan, share to chat, sticky notes (clouds). Removing a mid-path node
+  cuts it and re-routes later tips if a road still exists without it.
+- **Shared plan** for every open tab (SSE). Nodes on several trails count once
+  in totals. Admin sets **planning kingdom** (default K6).
+- **Totals strip:** horns (city Lv.N → N; **gates → 1**), amethyst/sapphire
+  per hour, buff icons, capture count. Help (`?`) explains gestures.
 
-Kingdoms can be added or removed. Nodes of a removed kingdom become unowned.
+### `/nodes` — Node table (admin edits)
 
-### `/links` — Roads
+Create and edit map objects: name, coordinates, type (city / gate / turret /
+main castle / kingdom base), level, buffs, notes. Kingdoms panel (admin):
+in-game number, name, colour, base. Renaming a kingdom **does not drop
+ownership**.
 
-Nodes are laid out by coordinates. Click one node to select it, click a second
-to add or remove a road; selection moves to the second node so chains are
-fast. Click a line to delete that road.
+### `/links` — Roads (admin)
 
-- Wheel / pinch — zoom, drag — pan, Esc — clear selection
-- **Fit** — frame the whole map
-- **45°** — if the in-game grid runs diagonally (default on)
-- **Y↕** — if the map looks vertically flipped
+Click one node, then another to add or remove a road; click a line to delete.
+Wheel / pinch zoom, drag pan, **Fit**, **45°**, **Y↕**.
 
 ### How to read the map
 
@@ -84,9 +99,9 @@ Labels depend on zoom so the overview stays readable:
 |---|---|
 | close | name and level (plus shield timer) |
 | mid / overview | level only |
-| far | icons only |
+| far | icons only (territory colour on the wide view) |
 
-**Buffs** (toggle on `/map`) answers a different question: not “what is this”
+**Buffs** (toggle on the map) answers a different question: not “what is this”
 but “what does it give”. The node icon becomes the buff icon (swords — attack,
 shield — defence, heart — HP), the label becomes the percent, and nodes with
 no buff shrink so they do not clutter targeting.
@@ -134,7 +149,8 @@ Primary use is mid-match updates on a phone:
 | | guest | helper | officer | admin |
 |---|---|---|---|---|
 | Map, stats, nodes — view | ✓ | ✓ | ✓ | ✓ |
-| Ownership, shields, “checked” | | ✓ | ✓ | ✓ |
+| Ownership, shields, battle, “checked” | | ✓ | ✓ | ✓ |
+| War room (chat + planning) | | | ✓ | ✓ |
 | Team and invites | | | ✓ | ✓ |
 | Edit nodes and roads | | | | ✓ |
 
@@ -163,6 +179,11 @@ check is a no-op so local dev works.
 - `edges` — roads. Pairs are stored as `aId < bId` (`normalizePair`) so
   duplicates cannot land from click order
 - `changes` — ownership log; `users`, `invites`, `audit_log` — accounts
+- `messages` — war-room chat (body, nick, optional `nodeId`, time); typing
+  is live-only and not stored
+- `plan_settings` — which kingdom the war room routes from
+- `plan_paths` / `plan_path_nodes` — ordered capture trails
+- `plan_notes` — officer notes on nodes (map clouds)
 
 Static map data (nodes, roads, kingdoms) lives in `db/seed-data.ts` and fills
 an empty database automatically. After UI edits, freeze the seed again with:
@@ -188,7 +209,12 @@ Templates: `deploy/warzone.service`, `deploy/Caddyfile.snippet`.
 
 Never commit `.env.local` or `*.db` — only code and the map seed.
 
-## Not built yet
+## Roadmap
 
-Capture planner (declaration rules needed first), three frontiers —
-ours / theirs / contested, cost-aware routes with ROI, territory cut points.
+**Done / live:** map, ownership, shields, battle, live SSE, **war room** —
+chat, shared trails, horns/yield/buff totals, node notes, help sheet, phone
+map camera fixes.
+
+**Later:** three frontiers (ours / theirs / contested), cost-aware routes with
+ROI, territory cut points, helper map sectors, fuller horns table if the game
+publishes one.

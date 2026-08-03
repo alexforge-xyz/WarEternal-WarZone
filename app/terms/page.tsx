@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   description: `Terms of use for ${PROJECT_NAME} (${BRAND}).`,
 };
 
-const UPDATED = "3 August 2026";
+const UPDATED = "4 August 2026";
 
 export default function TermsPage() {
   return (
@@ -49,7 +49,9 @@ export default function TermsPage() {
         </li>
         <li>
           Guests may view public screens. Editing map status requires an
-          invited account with the appropriate role.
+          invited account with the appropriate role. The{" "}
+          <strong>war room</strong> (officer chat, shared capture trails on the
+          map, and node notes) is limited to officers and admins.
         </li>
       </ul>
 
@@ -97,7 +99,13 @@ export default function TermsPage() {
         </li>
         <li>
           Upload unlawful content, personal data of third parties without a
-          basis, or anything that infringes others’ rights.
+          basis, or anything that infringes others’ rights — including in
+          war-room chat messages and plan notes on map nodes.
+        </li>
+        <li>
+          Use the war room to harass, spam, or share credentials, invite tokens
+          or other secrets that do not belong in a multi-officer channel
+          (chat, trails and notes are visible to other officers and admins).
         </li>
         <li>
           Use the Service to violate the game’s own rules or applicable law.
@@ -109,10 +117,15 @@ export default function TermsPage() {
 
       <h2>5. Content and accuracy</h2>
       <p>
-        Map nodes, roads, ownership and notes are community-maintained. The
-        publisher does not warrant that any figure, owner, shield timer or buff
-        total matches the live game. You use the map at your own risk for
-        in-game decisions.
+        Map nodes, roads, ownership and node notes are community-maintained.
+        War-room chat, shared capture trails and plan notes are written by
+        officers for coordination; they are stored on the server and visible to
+        other officers and admins who can open the room. Trails and “horns” /
+        yield estimates are planning aids derived from map data and provisional
+        rules — not official game values. The publisher does not warrant that
+        any figure, owner, shield timer, buff total or plan total matches the
+        live game. You use the map, chat and plan at your own risk for in-game
+        decisions.
       </p>
 
       <h2>6. Intellectual property</h2>
