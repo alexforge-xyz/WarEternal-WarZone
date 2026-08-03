@@ -26,18 +26,31 @@
   --font-mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
 }
 
-html,
-body {
-  height: 100%;
-  /* Reduce iOS overscroll fighting the map. */
+html {
+  /* Fallback before ViewportLock runs; svh is stable when URL chrome toggles. */
+  height: var(--app-height, 100svh);
+  max-height: var(--app-height, 100svh);
+  overflow: hidden;
   overscroll-behavior: none;
+  /* iOS: avoid rubber-band scrolling the whole document under map pans. */
+  touch-action: manipulation;
 }
 
 body {
+  height: inherit;
+  max-height: inherit;
+  overflow: hidden;
+  overscroll-behavior: none;
   background: var(--color-base);
   color: var(--color-text);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Map / war-room roots use h-full; ensure the flex chain can shrink. */
+main > * {
+  min-height: 0;
 }
 
 * {
@@ -193,6 +206,164 @@ select.field {
   animation-name: wz-sword-b;
 }
 
+/*
+  Capture-plan / expansion simulation.
+
+  White ↔ grey, slow and soft: the stage is "active", not alarming (battle
+  already owns orange + motion). No filters — same phone-pan rule as swords.
+  Nested SVG for the dashed ring so spin is about the node, not the board.
+*/
+/* Opacity-only pulses — stroke/fill colour keyframes are flaky on SVG in
+   some WebKit builds; battle marks already proved transform+opacity works. */
+@keyframes wz-plan-breathe {
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes wz-plan-halo {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+@keyframes wz-plan-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+  Light packet travelling along a plan edge. Lines use pathLength="1" so the
+  dash is a fraction of the segment — same look on a short hop and a long road.
+  Direction is the SVG line order (a → b): root / our territory → tip.
+  Opacity-only on the base edge: animating stroke *colour* on many lines while
+  the viewBox pans is what made the war-room board flicker.
+*/
+@keyframes wz-plan-edge {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes wz-plan-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -1;
+  }
+}
+
+.wz-plan-fill {
+  animation: wz-plan-breathe 3.8s ease-in-out infinite;
+}
+
+.wz-plan-halo {
+  fill: none;
+  stroke-width: 1.25;
+  animation: wz-plan-halo 3.8s ease-in-out infinite;
+}
+
+.wz-plan-spin {
+  transform-origin: 24px 24px;
+  /* Slow orbit — readable as "in progress", not a spinner. */
+  animation: wz-plan-spin 14s linear infinite;
+}
+
+.wz-plan-ring {
+  fill: none;
+  stroke: #d0d7e4;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  /* Dash pattern in viewBox units; CSS dasharray does not scale with SVG. */
+  stroke-dasharray: 3.2 4.6;
+  animation: wz-plan-breathe 3.8s ease-in-out infinite;
+}
+
+.wz-plan-edge {
+  fill: none;
+  stroke: #c5cddb;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: wz-plan-edge 3.8s ease-in-out infinite;
+}
+
+.wz-plan-flow {
+  fill: none;
+  stroke: #ffffff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Bright head + long gap → a pulse of light crawling toward the tip. */
+  stroke-dasharray: 0.14 0.86;
+  animation: wz-plan-flow 2.6s linear infinite;
+}
+
+/*
+  Camera group: pan/zoom is CSS transform only (see map-canvas). Prefer
+  compositor-friendly properties; SVG transform= attributes re-rasterise more
+  aggressively on Android Chrome (including flagships).
+*/
+.wz-map-camera {
+  will-change: transform;
+  transform-box: view-box;
+  transform-origin: 0 0;
+  backface-visibility: hidden;
+}
+
+/* Phones: no continuous plan motion while idle either — cheaper; still readable. */
+@media (hover: none) and (pointer: coarse) {
+  .wz-plan-fill,
+  .wz-plan-halo,
+  .wz-plan-ring,
+  .wz-plan-edge,
+  .wz-plan-spin {
+    animation: none !important;
+  }
+  .wz-plan-fill {
+    opacity: 0.55;
+  }
+  .wz-plan-halo,
+  .wz-plan-ring {
+    opacity: 0.75;
+  }
+  .wz-plan-edge {
+    opacity: 0.8;
+  }
+  /* Static dash instead of crawling light while idle on touch. */
+  .wz-plan-flow {
+    animation: none !important;
+    opacity: 0.85;
+    stroke-dasharray: 0.2 0.35;
+  }
+}
+
+/* Finger down: drop nested SVG decorations entirely for the gesture. */
+svg[data-panning="1"] .wz-map-deco,
+svg[data-panning="1"] .wz-plan-fill {
+  display: none !important;
+}
+
+svg[data-panning="1"] .wz-plan-edge {
+  animation: none !important;
+  opacity: 0.75;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Frozen mid-cross: still unmistakably crossed swords, just still. */
   .wz-sword {
@@ -203,5 +374,26 @@ select.field {
   }
   .wz-sword-b {
     transform: rotate(26deg);
+  }
+
+  .wz-plan-fill,
+  .wz-plan-halo,
+  .wz-plan-ring,
+  .wz-plan-edge {
+    animation: none;
+    stroke: #c5cddb;
+    fill: #c5cddb;
+    opacity: 0.75;
+  }
+  .wz-plan-spin {
+    animation: none;
+  }
+  .wz-plan-halo,
+  .wz-plan-ring {
+    fill: none;
+  }
+  .wz-plan-flow {
+    animation: none;
+    opacity: 0;
   }
 }

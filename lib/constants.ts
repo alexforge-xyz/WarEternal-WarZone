@@ -64,6 +64,17 @@ export const NEUTRAL_COLOR = "#64748b";
  */
 export const BATTLE_COLOR = "#ff6b3d";
 
+/**
+ * Planned capture path / expansion simulation. Outside the kingdom palette on
+ * purpose: the plan is "what we intend", not "who holds it now". Soft white–
+ * grey so it reads as an active stage without stealing attention from owners.
+ * Edges and node fills animate between these two (see `.wz-plan-*` in CSS).
+ */
+export const PLAN_COLOR_LIGHT = "#e8edf5";
+export const PLAN_COLOR_DIM = "#8b95a8";
+/** Mid tone for static fallbacks (labels, reduced-motion). */
+export const PLAN_COLOR = "#c5cddb";
+
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
 export function isHexColor(v: string): boolean {

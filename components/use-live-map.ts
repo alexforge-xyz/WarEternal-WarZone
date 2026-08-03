@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EdgeRow, NodeRow } from "@/db/schema";
 import type { LiveEvent, MapSnapshot } from "@/lib/live-events";
+import { reconnectLive, subscribeLive } from "./live-connection";
 
 /**
  * Keeps map rows fresh while the tab stays open.
  *
- * - SSE (`/api/live`) pushes `map.version` after any write on the server.
+ * - SSE (`/api/live`, shared socket) pushes `map.version` after any write.
  * - Snapshot (`/api/map`) carries the full node/edge set.
  * - Fallback poll every 30s if the stream is quiet or dead.
  * - Pauses extra work when the tab is hidden (SSE may still reconnect).
@@ -115,74 +116,31 @@ export function useLiveMap(
   }, [initialNodes, initialEdges]);
 
   useEffect(() => {
-    let es: EventSource | null = null;
-    let pollId: ReturnType<typeof setInterval> | null = null;
-    let retryId: ReturnType<typeof setTimeout> | null = null;
-    let closed = false;
-
     const FALLBACK_MS = 30_000;
 
-    function startPoll() {
-      if (pollId != null) return;
-      pollId = setInterval(() => {
-        if (document.visibilityState === "hidden") return;
-        void pull();
-      }, FALLBACK_MS);
-    }
+    // The socket itself is shared with the war-room chat (live-connection.ts);
+    // this hook only owns the snapshot pulls and the fallback poll.
+    const unsub = subscribeLive(onEvent, (v) => {
+      if (mountedRef.current) setLive(v);
+    });
 
-    function stopPoll() {
-      if (pollId != null) {
-        clearInterval(pollId);
-        pollId = null;
-      }
-    }
-
-    function connect() {
-      if (closed) return;
-      es?.close();
-      es = new EventSource("/api/live");
-
-      es.onopen = () => {
-        if (!mountedRef.current) return;
-        setLive(true);
-      };
-
-      es.onmessage = (msg) => {
-        try {
-          onEvent(JSON.parse(msg.data) as LiveEvent);
-        } catch {
-          /* ignore malformed */
-        }
-      };
-
-      es.onerror = () => {
-        if (!mountedRef.current) return;
-        setLive(false);
-        es?.close();
-        es = null;
-        // Browser reconnect is unreliable across sleeps; do our own backoff.
-        if (retryId != null) clearTimeout(retryId);
-        retryId = setTimeout(connect, 2000);
-      };
-    }
+    const pollId = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void pull();
+    }, FALLBACK_MS);
 
     const onVis = () => {
       if (document.visibilityState === "visible") {
         void pull();
-        if (!es || es.readyState === EventSource.CLOSED) connect();
+        reconnectLive();
       }
     };
-
-    connect();
-    startPoll();
     document.addEventListener("visibilitychange", onVis);
 
     return () => {
-      closed = true;
       document.removeEventListener("visibilitychange", onVis);
-      stopPoll();
-      if (retryId != null) clearTimeout(retryId);
-      es?.close();
+      clearInterval(pollId);
+      unsub();
       setLive(false);
     };
   }, [onEvent, pull]);

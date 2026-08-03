@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Map as MapIcon, Share2, Table2, Users } from "lucide-react";
+import {
+  BarChart3,
+  Map as MapIcon,
+  MessageSquare,
+  Share2,
+  Table2,
+  Users,
+} from "lucide-react";
 import type { MessageKey } from "@/lib/i18n";
 import { useT } from "./i18n-provider";
 import { useRole } from "./role-provider";
@@ -19,6 +26,12 @@ type Item = {
 
 const LINKS: Item[] = [
   { href: "/", key: "nav.map", icon: MapIcon },
+  {
+    href: "/war-room",
+    key: "nav.warRoom",
+    icon: MessageSquare,
+    officerOnly: true,
+  },
   { href: "/stats", key: "nav.stats", icon: BarChart3 },
   { href: "/nodes", key: "nav.nodes", icon: Table2 },
   { href: "/links", key: "nav.links", icon: Share2, adminOnly: true },

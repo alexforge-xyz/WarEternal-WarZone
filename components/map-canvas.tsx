@@ -17,12 +17,14 @@ import { dominantBuff, type BuffField } from "./buff-icon";
  * node/road drawing. Both screens use it — `/links` to wire roads, `/map` to
  * work with ownership — so the gesture handling exists once.
  *
- * Performance notes (phones):
- * - Pan updates the SVG viewBox via the DOM; React only re-renders when zoom
- *   (and thus mark size / label LOD) changes, or when the gesture ends.
- * - Glyphs are cheap <symbol>/<use> paths, not 231 Lucide React trees.
- * - Edge strokes use non-scaling-stroke so width stays correct without a
- *   re-render on every pan frame.
+ * Performance notes (phones — S-series included, not a “weak phone” issue):
+ * - Camera is a single `<g transform=matrix>` under a *fixed* viewBox in
+ *   screen pixels. Changing `viewBox` every pan frame forces a full SVG
+ *   re-raster on Android Chrome and reads as whole-page flicker; a matrix
+ *   on one group can stay on the compositor.
+ * - React only re-renders for cull / mark LOD (throttled on zoom, on pan end).
+ * - Glyphs are `<symbol>`/`<use>`, not 231 Lucide React trees.
+ * - Edge strokes use non-scaling-stroke so width stays correct under scale.
  */
 
 type View = { x: number; y: number; w: number; h: number };
@@ -54,10 +56,33 @@ export type NodeStyle = {
   /** Crossed swords, drawn while somebody reports a fight over this node. */
   battle?: boolean;
   /**
+   * Node sits on the shared capture plan (expansion path). White–grey breathe
+   * on the disc + slow dashed orbit — "active stage", not ownership colour.
+   */
+  plan?: boolean;
+  /** War-room sticky notes — small cloud badge over the mark. */
+  note?: boolean;
+  /** How many notes (badge digit); only when `note` is true. */
+  noteCount?: number;
+  /**
    * Colour of the territory this node projects onto the board, or null for
    * "holds nothing". Only used by the zoomed-out view (see `territory`).
    */
   zone?: string | null;
+};
+
+/**
+ * One directed hop of the capture plan. Light flows **a → b** (from our
+ * territory toward a tip). When several branches leave a node, each segment
+ * carries its own wave — the shared node is the merge, not a conflict.
+ *
+ * `hop` is distance from the root in steps; used only to stagger the wave so
+ * it reads as a front expanding outward rather than every edge flashing in sync.
+ */
+export type PlanEdgeSeg = {
+  aId: number;
+  bId: number;
+  hop?: number;
 };
 
 /** Screen-space radius of a node mark, in CSS pixels, per kind. */
@@ -167,8 +192,21 @@ function detailOf(v: View, cssW: number): Detail {
   return k < NAME_UNTIL ? "full" : k < LEVEL_UNTIL ? "compact" : "none";
 }
 
-function viewBoxAttr(v: View): string {
-  return `${v.x} ${v.y} ${v.w} ${v.h}`;
+/** Fixed screen-space viewBox — camera lives on a group transform, not here. */
+function screenViewBoxAttr(sw: number, sh: number): string {
+  return `0 0 ${Math.max(sw, 1)} ${Math.max(sh, 1)}`;
+}
+
+/**
+ * World → screen: scale then translate so world point (view.x, view.y) lands
+ * at the top-left of the SVG. One matrix update pans/zooms without touching
+ * every child attribute.
+ */
+/** CSS matrix for the world group (screen viewBox units ≈ CSS px). */
+function cameraCssMatrix(v: View, sw: number, sh: number): string {
+  const sx = sw / Math.max(v.w, 1e-9);
+  const sy = sh / Math.max(v.h, 1e-9);
+  return `matrix(${sx}, 0, 0, ${sy}, ${-v.x * sx}, ${-v.y * sy})`;
 }
 
 /**
@@ -303,6 +341,9 @@ const BUFF_GLYPH_ID: Record<BuffField, string> = {
  */
 const BATTLE_SPAN = 3.4;
 const BATTLE_SPAN_FAR = 2.4;
+/** Dashed plan orbit relative to mark radius (close / territory zoom). */
+const PLAN_SPAN = 3.6;
+const PLAN_SPAN_FAR = 2.8;
 
 /**
  * Two swords scissoring open and shut over a contested node.
@@ -356,6 +397,7 @@ function Sword({ variant, dx }: { variant: "a" | "b"; dx: number }) {
 function BattleMark({ size }: { size: number }) {
   return (
     <svg
+      className="wz-map-deco"
       x={-size / 2}
       y={-size / 2}
       width={size}
@@ -373,6 +415,156 @@ function BattleMark({ size }: { size: number }) {
       <Sword variant="a" dx={SWORD_OFFSET} />
       <Sword variant="b" dx={-SWORD_OFFSET} />
     </svg>
+  );
+}
+
+/**
+ * Planned capture stage around a node: soft breathing halo + dashed ring that
+ * crawls slowly. Nested viewBox so spin stays centred on the node — same trick
+ * as BattleMark (CSS transform on a local SVG, not the whole board).
+ */
+function PlanMark({ size }: { size: number }) {
+  return (
+    <svg
+      className="wz-map-deco"
+      x={-size / 2}
+      y={-size / 2}
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      overflow="visible"
+      style={{ pointerEvents: "none" }}
+      aria-hidden
+    >
+      {/* Opacity breathe — more reliable on SVG than animating stroke colour. */}
+      <circle
+        cx="24"
+        cy="24"
+        r="21"
+        fill="none"
+        stroke="#e8edf5"
+        strokeWidth="1.5"
+        className="wz-plan-halo"
+      />
+      <g className="wz-plan-spin">
+        <circle
+          cx="24"
+          cy="24"
+          r="18"
+          fill="none"
+          stroke="#d0d7e4"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeDasharray="3.5 5.2"
+          className="wz-plan-ring"
+        />
+      </g>
+    </svg>
+  );
+}
+
+/** Sticky-note cloud over a war-room node (count badge when several). */
+function NoteCloud({
+  size,
+  count,
+  k,
+  markR,
+}: {
+  size: number;
+  count: number;
+  k: number;
+  markR: number;
+}) {
+  const y = -markR - size * 0.55;
+  return (
+    <g
+      className="wz-map-deco"
+      transform={`translate(0 ${y})`}
+      style={{ pointerEvents: "none" }}
+      aria-hidden
+    >
+      <ellipse
+        cx={0}
+        cy={0}
+        rx={size * 0.55}
+        ry={size * 0.38}
+        fill="#f8fafc"
+        stroke="#94a3b8"
+        strokeWidth={1.2 * k}
+        opacity={0.95}
+      />
+      <ellipse
+        cx={-size * 0.18}
+        cy={size * 0.22}
+        rx={size * 0.14}
+        ry={size * 0.1}
+        fill="#f8fafc"
+        stroke="#94a3b8"
+        strokeWidth={0.9 * k}
+      />
+      <text
+        y={size * 0.12}
+        textAnchor="middle"
+        fontSize={Math.max(9 * k, size * 0.45)}
+        fontWeight="700"
+        fill="#0b0f17"
+      >
+        {count > 9 ? "9+" : count > 1 ? String(count) : "…"}
+      </text>
+    </g>
+  );
+}
+
+/** Seconds of delay per hop so the light front expands from our border outward. */
+const PLAN_FLOW_STAGGER_S = 0.45;
+
+/**
+ * Shared capture-plan roads: soft white–grey base + a bright packet crawling
+ * a → b. Drawn above the ordinary graph and under node marks so the wave
+ * tucks under discs at the tips.
+ */
+function PlanEdgesLayer({
+  segs,
+  byId,
+  k,
+}: {
+  segs: PlanEdgeSeg[];
+  byId: Map<number, Pt>;
+  /** World units per CSS px — stroke width in map space so we skip non-scaling-stroke. */
+  k: number;
+}) {
+  if (segs.length === 0) return null;
+  return (
+    <g className="wz-plan-roads" style={{ pointerEvents: "none" }} aria-hidden>
+      {segs.map((seg) => {
+        const a = byId.get(seg.aId);
+        const b = byId.get(seg.bId);
+        if (!a || !b) return null;
+        const delay = `${(seg.hop ?? 0) * PLAN_FLOW_STAGGER_S}s`;
+        return (
+          <g key={`plan-${seg.aId}-${seg.bId}`}>
+            <line
+              x1={a.px}
+              y1={a.py}
+              x2={b.px}
+              y2={b.py}
+              className="wz-plan-edge"
+              strokeWidth={3.4 * k}
+            />
+            <line
+              x1={a.px}
+              y1={a.py}
+              x2={b.px}
+              y2={b.py}
+              className="wz-plan-flow wz-map-deco"
+              pathLength={1}
+              strokeWidth={4.2 * k}
+              style={{ animationDelay: delay }}
+            />
+          </g>
+        );
+      })}
+    </g>
   );
 }
 
@@ -433,7 +625,12 @@ function MapCanvasImpl({
   mode = "kind",
   territory = false,
   fitToken = 0,
+  focusId = null,
+  focusToken = 0,
+  planEdges = [],
+  onLongPressNode,
   toolbar,
+  toolbarEnd,
   status,
   empty,
 }: {
@@ -443,6 +640,11 @@ function MapCanvasImpl({
   flipY: boolean;
   selectedId: number | null;
   onSelectNode: (id: number) => void;
+  /**
+   * Hold ~0.5s on a node (touch or right-click). Parent opens a menu; the
+   * following click/tap is suppressed so a long-press does not also route.
+   */
+  onLongPressNode?: (id: number) => void;
   onEdgeClick?: (edge: EdgeRow) => void;
   styleFor: (node: NodeRow) => NodeStyle;
   /** Extra text under the name, e.g. a shield countdown. */
@@ -457,12 +659,29 @@ function MapCanvasImpl({
   territory?: boolean;
   /** Bump to re-fit the view from outside. */
   fitToken?: number;
+  /**
+   * Pan the camera onto this node without changing zoom. Pair with
+   * `focusToken` — bump the token when a chip in chat asks the map to show a
+   * node; pan re-runs if the panel was still `display:none` (phone tab) when
+   * the request arrived.
+   */
+  focusId?: number | null;
+  focusToken?: number;
+  /**
+   * Directed capture-plan segments (light a → b). Empty on the live map; the
+   * war room fills this when officers lay expansion paths.
+   */
+  planEdges?: PlanEdgeSeg[];
+  /** Top-start controls (Fit, 45°, …). */
   toolbar?: React.ReactNode;
+  /** Top-end controls (Help, …) — same button style as the start toolbar. */
+  toolbarEnd?: React.ReactNode;
   status?: React.ReactNode;
   empty?: React.ReactNode;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const cameraRef = useRef<SVGGElement>(null);
   const [size, setSize] = useState({ w: 900, h: 600 });
   const [view, setView] = useState<View>({ x: 0, y: 0, w: 100, h: 100 });
   const viewRef = useRef(view);
@@ -508,36 +727,49 @@ function MapCanvasImpl({
     return () => ro.disconnect();
   }, []);
 
-  /** Push the camera into the SVG without React. Safe while k is unchanged. */
-  const paintViewBox = useCallback((v: View) => {
+  /** CSS transform on the world group — better GPU path than SVG transform attr. */
+  const paintCamera = useCallback((v: View) => {
     viewRef.current = v;
-    const svg = svgRef.current;
-    if (svg) svg.setAttribute("viewBox", viewBoxAttr(v));
+    const g = cameraRef.current;
+    if (!g) return;
+    const { w: sw, h: sh } = sizeRef.current;
+    g.style.transform = cameraCssMatrix(v, sw, sh);
   }, []);
 
-  /** Commit camera to React (mark sizes, labels, stroke fallbacks). */
+  /**
+   * While the finger moves: hide animated decorations (see globals.css) and
+   * skip React. Attribute only — no setState mid-gesture.
+   */
+  const setCameraBusy = useCallback((busy: boolean) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    if (busy) svg.setAttribute("data-panning", "1");
+    else svg.removeAttribute("data-panning");
+  }, []);
+
+  const wheelIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Commit camera to React (cull + mark sizes / LOD). */
   const commitView = useCallback((v: View) => {
     viewRef.current = v;
     detailRef.current = detailOf(v, sizeRef.current.w);
-    const svg = svgRef.current;
-    if (svg) svg.setAttribute("viewBox", viewBoxAttr(v));
+    const g = cameraRef.current;
+    if (g) {
+      const { w: sw, h: sh } = sizeRef.current;
+      g.style.transform = cameraCssMatrix(v, sw, sh);
+    }
     setView(v);
   }, []);
 
   /**
-   * Coalesce zoom updates to one React render per frame. Pan stays DOM-only
-   * until the gesture ends (k is constant while only x/y move).
+   * Zoom/pinch: matrix only. React (cull + LOD) waits for the gesture to end —
+   * mid-pinch rebuilds were a big part of the remaining map flicker on phones.
    */
   const scheduleZoomView = useCallback(
     (v: View) => {
-      paintViewBox(v);
-      if (rafReactRef.current != null) return;
-      rafReactRef.current = requestAnimationFrame(() => {
-        rafReactRef.current = null;
-        commitView(viewRef.current);
-      });
+      paintCamera(v);
     },
-    [paintViewBox, commitView],
+    [paintCamera],
   );
 
   useEffect(() => {
@@ -589,6 +821,29 @@ function MapCanvasImpl({
   }, [fitKey, fit]);
 
   /**
+   * Chat chips (and any other external "look at this node") pan here. Keep the
+   * current zoom: the officer already framed the front they care about; they
+   * only need the camera to land on the pin. Re-runs when the panel becomes
+   * measurable (phone tab was `display:none` when the chip was tapped).
+   */
+  const lastFocus = useRef(0);
+  useEffect(() => {
+    if (!focusToken || focusId == null) return;
+    if (size.w < 2 || size.h < 2) return;
+    if (lastFocus.current === focusToken) return;
+    const p = ptsRef.current.find((pt) => pt.node.id === focusId);
+    if (!p) return;
+    lastFocus.current = focusToken;
+    const v = viewRef.current;
+    commitView({
+      x: p.px - v.w / 2,
+      y: p.py - v.h / 2,
+      w: v.w,
+      h: v.h,
+    });
+  }, [focusToken, focusId, size.w, size.h, commitView]);
+
+  /**
    * A resize still has to be honoured, or the map would stretch: the viewBox
    * keeps its width and takes the container's aspect, growing or shrinking
    * around the centre of what is on screen.
@@ -608,6 +863,14 @@ function MapCanvasImpl({
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      setCameraBusy(true);
+      if (wheelIdleRef.current != null) clearTimeout(wheelIdleRef.current);
+      wheelIdleRef.current = setTimeout(() => {
+        wheelIdleRef.current = null;
+        setCameraBusy(false);
+        // Apply final k (mark sizes / LOD) after the wheel burst settles.
+        commitView(viewRef.current);
+      }, 160);
       const rect = el.getBoundingClientRect();
       const mx = (e.clientX - rect.left) / rect.width;
       const my = (e.clientY - rect.top) / rect.height;
@@ -623,8 +886,19 @@ function MapCanvasImpl({
       });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [scheduleZoomView]);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      if (wheelIdleRef.current != null) clearTimeout(wheelIdleRef.current);
+    };
+  }, [scheduleZoomView, setCameraBusy, commitView]);
+
+  // Keep camera CSS transform in sync after React commits (size / view change).
+  useEffect(() => {
+    const g = cameraRef.current;
+    if (!g) return;
+    g.style.transform = cameraCssMatrix(view, size.w, size.h);
+    g.style.transformOrigin = "0px 0px";
+  }, [view, size.w, size.h]);
 
   /* ---------------- drag & pinch ---------------- */
 
@@ -644,6 +918,26 @@ function MapCanvasImpl({
     view: View;
   } | null>(null);
   const moved = useRef(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+  /** Swallow the click that follows a successful long-press / context menu. */
+  const suppressClick = useRef(false);
+
+  function clearLongPress() {
+    if (longPressTimer.current != null) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }
+
+  function fireLongPress(id: number) {
+    if (!onLongPressNode) return;
+    longPressFired.current = true;
+    suppressClick.current = true;
+    moved.current = true;
+    drag.current = null;
+    onLongPressNode(id);
+  }
 
   function localFromClient(clientX: number, clientY: number) {
     const rect = wrapRef.current!.getBoundingClientRect();
@@ -655,8 +949,36 @@ function MapCanvasImpl({
     if (!el.hasPointerCapture(e.pointerId)) el.setPointerCapture(e.pointerId);
   }
 
+  function findNodeAtClient(clientX: number, clientY: number): number | null {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect || rect.width < 1 || rect.height < 1) return null;
+    const v = viewRef.current;
+    const sw = sizeRef.current.w;
+    const sh = sizeRef.current.h;
+    // Client → screen SVG (fixed 0..sw / 0..sh viewBox) → world.
+    const screenX = ((clientX - rect.left) / rect.width) * sw;
+    const screenY = ((clientY - rect.top) / rect.height) * sh;
+    const mx = (screenX / sw) * v.w + v.x;
+    const my = (screenY / sh) * v.h + v.y;
+    const k = v.w / Math.max(sw, 1);
+    const boost = markBoost(k);
+    let best: { id: number; d2: number } | null = null;
+    for (const { node, px, py } of ptsRef.current) {
+      const r = MARK_PX[node.kind] * boost * k * 1.6;
+      const ddx = mx - px;
+      const ddy = my - py;
+      const d2 = ddx * ddx + ddy * ddy;
+      if (d2 <= r * r && (!best || d2 < best.d2)) {
+        best = { id: node.id, d2 };
+      }
+    }
+    return best?.id ?? null;
+  }
+
   function onPointerDown(e: React.PointerEvent) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    longPressFired.current = false;
+    clearLongPress();
     // Real phones start a document scroll the moment the finger moves, unless
     // we own the pointer *now*. Desktop still defers capture so node clicks
     // hit the <g>, not the svg surface (see onPointerMove).
@@ -680,6 +1002,8 @@ function MapCanvasImpl({
       };
       drag.current = null;
       moved.current = true;
+      clearLongPress();
+      setCameraBusy(true);
       return;
     }
     if (pointers.current.size === 1) {
@@ -692,6 +1016,18 @@ function MapCanvasImpl({
         pointerType: e.pointerType,
       };
       moved.current = false;
+
+      if (onLongPressNode) {
+        const hitId = findNodeAtClient(e.clientX, e.clientY);
+        if (hitId != null) {
+          longPressTimer.current = setTimeout(() => {
+            longPressTimer.current = null;
+            if (moved.current) return;
+            // Hold still — open menu, cancel pan / short-tap routing.
+            fireLongPress(hitId);
+          }, 480);
+        }
+      }
     }
   }
 
@@ -707,6 +1043,7 @@ function MapCanvasImpl({
 
     const p = pinch.current;
     if (p && pointers.current.size >= 2) {
+      clearLongPress();
       const [a, b] = [...pointers.current.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       const w = Math.min(Math.max((p.view.w * p.dist) / dist, MIN_W), MAX_W);
@@ -730,15 +1067,16 @@ function MapCanvasImpl({
     const dy = e.clientY - d.sy;
     const slop = d.pointerType === "touch" || d.pointerType === "pen" ? 10 : 4;
     if (Math.abs(dx) > slop || Math.abs(dy) > slop) {
+      if (!moved.current) setCameraBusy(true);
       moved.current = true;
+      clearLongPress();
       // Mouse: capture only once it's clearly a drag (keeps node clicks working).
       if (d.pointerType === "mouse") capture(e);
     }
     if (!moved.current) return;
     const v = viewRef.current;
-    // Pan only: DOM viewBox. k is unchanged, so marks/labels stay correct
-    // without a full React pass on every finger pixel.
-    paintViewBox({
+    // Pan only: one camera matrix on the world group — not viewBox thrashing.
+    paintCamera({
       ...v,
       x: d.vx - (dx * v.w) / sw,
       y: d.vy - (dy * v.h) / sh,
@@ -747,28 +1085,29 @@ function MapCanvasImpl({
 
   function pickNodeAtClient(clientX: number, clientY: number) {
     // Touch capture steals the synthetic click target; hit-test nodes ourselves.
-    const rect = wrapRef.current?.getBoundingClientRect();
-    if (!rect || rect.width < 1 || rect.height < 1) return;
-    const v = viewRef.current;
-    const mx = v.x + ((clientX - rect.left) / rect.width) * v.w;
-    const my = v.y + ((clientY - rect.top) / rect.height) * v.h;
-    const k = v.w / Math.max(rect.width, 1);
-    const boost = markBoost(k);
-    let best: { id: number; d2: number } | null = null;
-    for (const { node, px, py } of ptsRef.current) {
-      const r = MARK_PX[node.kind] * boost * k * 1.6;
-      const ddx = mx - px;
-      const ddy = my - py;
-      const d2 = ddx * ddx + ddy * ddy;
-      if (d2 <= r * r && (!best || d2 < best.d2)) {
-        best = { id: node.id, d2 };
-      }
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
     }
-    if (best) onSelectNode(best.id);
+    const id = findNodeAtClient(clientX, clientY);
+    if (id != null) onSelectNode(id);
+  }
+
+  function onContextMenu(e: React.MouseEvent) {
+    if (!onLongPressNode) return;
+    const id = findNodeAtClient(e.clientX, e.clientY);
+    if (id == null) return;
+    e.preventDefault();
+    clearLongPress();
+    fireLongPress(id);
   }
 
   function onPointerUp(e: React.PointerEvent) {
+    clearLongPress();
+    const skipTap = longPressFired.current;
+    longPressFired.current = false;
     const wasTap =
+      !skipTap &&
       !moved.current &&
       (e.pointerType === "touch" || e.pointerType === "pen") &&
       pointers.current.size <= 1 &&
@@ -779,6 +1118,7 @@ function MapCanvasImpl({
     if (pointers.current.size < 2) pinch.current = null;
     if (pointers.current.size === 0) {
       drag.current = null;
+      setCameraBusy(false);
       // Flush any DOM-only pan (or pending zoom rAF) into React so the next
       // data re-render does not snap the camera back.
       if (rafReactRef.current != null) {
@@ -796,6 +1136,7 @@ function MapCanvasImpl({
     if (pointers.current.size < 2) pinch.current = null;
     if (pointers.current.size === 0) {
       drag.current = null;
+      setCameraBusy(false);
       commitView(viewRef.current);
     }
   }
@@ -823,7 +1164,9 @@ function MapCanvasImpl({
   /** Zoomed out past the point where discs can fit: paint ground, not marks. */
   const far = territory && k >= TERRITORY_FROM;
 
-  // Precompute styles once per styleFor identity (parent throttles the clock).
+  // Full board always — viewport culling left empty strips when zooming out
+  // before React re-committed the camera (phone pan/zoom). Flicker is handled
+  // by the CSS camera matrix instead.
   const styles = useMemo(() => {
     const m = new Map<number, NodeStyle>();
     for (const { node } of pts) m.set(node.id, styleFor(node));
@@ -831,7 +1174,6 @@ function MapCanvasImpl({
   }, [pts, styleFor]);
 
   // Held nodes bucketed by colour — one province per kingdom, not per node.
-  // Keyed off `styles`, so it survives pan and zoom untouched.
   const zoneGroups = useMemo<[string, Pt[]][]>(() => {
     if (!territory) return [];
     const m = new Map<string, Pt[]>();
@@ -882,15 +1224,28 @@ function MapCanvasImpl({
         ref={svgRef}
         className="absolute inset-0 h-full w-full select-none"
         style={{ touchAction: "none" }}
-        viewBox={viewBoxAttr(view)}
+        viewBox={screenViewBoxAttr(size.w, size.h)}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerLeave={onPointerLeave}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onContextMenu={onContextMenu}
       >
         <MapGlyphDefs />
 
+        {/*
+          World layer: pan/zoom = this matrix only. Fixed viewBox above is
+          screen pixels; children stay in map coordinates.
+        */}
+        <g
+          ref={cameraRef}
+          className="wz-map-camera"
+          style={{
+            transform: cameraCssMatrix(view, size.w, size.h),
+            transformOrigin: "0px 0px",
+          }}
+        >
         {far && <TerritoryLayer groups={zoneGroups} />}
 
         <g>
@@ -900,6 +1255,9 @@ function MapCanvasImpl({
             if (!a || !b) return null;
             const touches =
               selectedId === edge.aId || selectedId === edge.bId;
+            // Stroke in world units (× k ≈ screen px). Avoid non-scaling-stroke
+            // under a live CSS transform — it forces extra work on Android GPUs.
+            const sw = (touches ? 4.8 : 3) * k;
             return (
               <g key={`${edge.aId}-${edge.bId}`}>
                 <line
@@ -908,22 +1266,18 @@ function MapCanvasImpl({
                   x2={b.px}
                   y2={b.py}
                   stroke={touches ? "#38bdf8" : "#3f4d69"}
-                  strokeWidth={touches ? 4.8 : 3}
+                  strokeWidth={sw}
                   strokeLinecap="round"
-                  vectorEffect="non-scaling-stroke"
                 />
                 {onEdgeClick && (
-                  // Wide invisible line so a road is tappable on a phone.
-                  // Hit width stays ~screen pixels via non-scaling-stroke.
                   <line
                     x1={a.px}
                     y1={a.py}
                     x2={b.px}
                     y2={b.py}
                     stroke="transparent"
-                    strokeWidth={14}
+                    strokeWidth={14 * k}
                     strokeLinecap="round"
-                    vectorEffect="non-scaling-stroke"
                     style={{ cursor: "pointer" }}
                     onClick={(ev) => {
                       ev.stopPropagation();
@@ -936,6 +1290,9 @@ function MapCanvasImpl({
             );
           })}
         </g>
+
+        {/* Expansion plan: base path + light wave toward tips, under marks. */}
+        <PlanEdgesLayer segs={planEdges} byId={byId} k={k} />
 
         <g>
           {pts.map(({ node, px, py }) => {
@@ -964,6 +1321,10 @@ function MapCanvasImpl({
                 style={{ cursor: "pointer" }}
                 onClick={(ev) => {
                   ev.stopPropagation();
+                  if (suppressClick.current) {
+                    suppressClick.current = false;
+                    return;
+                  }
                   if (moved.current) return;
                   onSelectNode(node.id);
                 }}
@@ -998,6 +1359,17 @@ function MapCanvasImpl({
                     strokeDasharray={`${3 * k} ${2.5 * k}`}
                   />
                 )}
+                {/* Outline (e.g. link-editor neighbours) must survive far zoom
+                    when discs are off. */}
+                {far && s.outline && (
+                  <circle
+                    r={gSize * 0.9}
+                    fill="none"
+                    stroke={s.outline}
+                    strokeWidth={1.8 * k}
+                    strokeOpacity={0.95}
+                  />
+                )}
                 {/* Far out the ground is already the kingdom's colour, so the
                     disc and its ring would only repeat it — at the density
                     where they overlap into a pile. The glyph alone, half
@@ -1012,12 +1384,24 @@ function MapCanvasImpl({
                 )}
                 {!far && (
                   // Disc carries the colour, glyph carries the meaning.
-                  <circle
-                    r={r}
-                    fill={s.fill}
-                    stroke={s.outline ?? "#0b0f17"}
-                    strokeWidth={1.6 * k}
-                  />
+                  // Plan: soft white overlay that breathes — kingdom fill stays
+                  // underneath so ownership is still readable.
+                  <>
+                    <circle
+                      r={r}
+                      fill={s.fill}
+                      stroke={s.outline ?? "#0b0f17"}
+                      strokeWidth={1.6 * k}
+                    />
+                    {s.plan && (
+                      <circle
+                        r={r}
+                        fill="#e8edf5"
+                        className="wz-plan-fill"
+                        style={{ pointerEvents: "none" }}
+                      />
+                    )}
+                  </>
                 )}
                 {glyphId && (
                   <use
@@ -1033,8 +1417,19 @@ function MapCanvasImpl({
                     }}
                   />
                 )}
+                {s.plan && (
+                  <PlanMark size={r * (far ? PLAN_SPAN_FAR : PLAN_SPAN)} />
+                )}
                 {s.battle && (
                   <BattleMark size={r * (far ? BATTLE_SPAN_FAR : BATTLE_SPAN)} />
+                )}
+                {s.note && (
+                  <NoteCloud
+                    size={r * (far ? 1.8 : 2.2)}
+                    count={s.noteCount ?? 1}
+                    k={k}
+                    markR={r}
+                  />
                 )}
                 {!far && s.flag && (
                   <g transform={`translate(${r * 1.5} ${-r * 1.6})`}>
@@ -1135,11 +1530,18 @@ function MapCanvasImpl({
             ))}
           </g>
         )}
+        </g>
       </svg>
 
       {toolbar && (
-        <div className="absolute start-2 top-2 flex flex-wrap gap-1.5">
+        <div className="absolute start-2 top-2 z-10 flex flex-wrap gap-1.5">
           {toolbar}
+        </div>
+      )}
+
+      {toolbarEnd && (
+        <div className="absolute end-2 top-2 z-10 flex flex-wrap justify-end gap-1.5">
+          {toolbarEnd}
         </div>
       )}
 

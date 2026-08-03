@@ -245,6 +245,120 @@ export const auditLog = sqliteTable(
   (t) => [index("audit_at").on(t.at)],
 );
 
+/* ------------------------------ war room ------------------------------ */
+
+/**
+ * Officer chat. Lives in the same file as the map on purpose: a line of chat
+ * and the node it argues about are one thing, and `nodeId` is what makes
+ * "берём вот этот" still clickable a day later.
+ *
+ * Authorship is a real account — the room is closed from `officer` up — but
+ * the nick is denormalised so disabling somebody does not turn their half of
+ * the planning session into "unknown".
+ */
+export const messages = sqliteTable(
+  "messages",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    nick: text("nick").notNull(),
+    body: text("body").notNull(),
+    /** The node this line is about, or null for plain talk. */
+    nodeId: integer("node_id").references(() => nodes.id, {
+      onDelete: "set null",
+    }),
+    at: integer("at")
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (t) => [index("messages_at").on(t.at)],
+);
+
+/**
+ * Single-row war-room config. Officers are not per-kingdom; this is only the
+ * anchor for auto-routing ("nearest owned node of *this* kingdom").
+ */
+export const planSettings = sqliteTable("plan_settings", {
+  /** Always 1 — one war room, one planning kingdom. */
+  id: integer("id").primaryKey(),
+  planningKingdomId: integer("planning_kingdom_id").references(
+    () => kingdoms.id,
+    { onDelete: "set null" },
+  ),
+});
+
+/**
+ * One expansion trail. Shared by every officer tab. Trails may share nodes;
+ * the board and cost panel treat the shared node as one (union), not a
+ * conflict.
+ */
+export const planPaths = sqliteTable("plan_paths", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  /** Optional short label; empty → "Trail N" in the UI. */
+  label: text("label"),
+  sort: integer("sort").notNull().default(0),
+  createdBy: integer("created_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: integer("created_at")
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/**
+ * Ordered nodes of a trail. Step 0 is the owned start; later steps are the
+ * capture chain to the tip. Same node may appear on several paths — costs
+ * still count it once.
+ */
+export const planPathNodes = sqliteTable(
+  "plan_path_nodes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    pathId: integer("path_id")
+      .notNull()
+      .references(() => planPaths.id, { onDelete: "cascade" }),
+    nodeId: integer("node_id")
+      .notNull()
+      .references(() => nodes.id, { onDelete: "cascade" }),
+    step: integer("step").notNull(),
+  },
+  (t) => [
+    uniqueIndex("plan_path_step").on(t.pathId, t.step),
+    index("plan_path_nodes_path").on(t.pathId),
+  ],
+);
+
+/**
+ * Officer notes on a map node for the war room. Shown as a small cloud over
+ * the mark; long-press opens the list under the action menu.
+ */
+export const planNotes = sqliteTable(
+  "plan_notes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    nodeId: integer("node_id")
+      .notNull()
+      .references(() => nodes.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    nick: text("nick").notNull(),
+    userId: integer("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    at: integer("at")
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (t) => [index("plan_notes_node").on(t.nodeId)],
+);
+
+export type MessageRow = typeof messages.$inferSelect;
+export type PlanSettingsRow = typeof planSettings.$inferSelect;
+export type PlanPathRow = typeof planPaths.$inferSelect;
+export type PlanPathNodeRow = typeof planPathNodes.$inferSelect;
+export type PlanNoteRow = typeof planNotes.$inferSelect;
+
 export type UserRow = typeof users.$inferSelect;
 export type InviteRow = typeof invites.$inferSelect;
 export type AuditRow = typeof auditLog.$inferSelect;

@@ -251,10 +251,10 @@ export function MapScreen({
   );
 
   return (
-    // Explicit viewport height (header ~3.5rem + footer ~2.5rem). Never use
-    // min-h-[420px] here — on short phones it grows past 100dvh and the
-    // browser steals touches for page scroll instead of map pan.
-    <div className="grid h-[calc(100svh-6rem)] max-h-[calc(100svh-6rem)] grid-cols-1 overflow-hidden lg:grid-cols-[1fr_340px]">
+    // Fill `main` under the fixed app shell (see layout). Do not use
+    // calc(100svh − …): that stacked with header+footer and stole pan for
+    // document scroll — whole page flicker under a sticky header.
+    <div className="grid h-full min-h-0 grid-cols-1 overflow-hidden lg:grid-cols-[1fr_340px]">
       <div className="relative min-h-0 lg:border-e">
         {/*
           Isolated from the 1s panel clock: only re-renders when mapNow (5s),

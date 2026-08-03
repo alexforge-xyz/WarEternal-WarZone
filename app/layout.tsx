@@ -12,6 +12,7 @@ import { NavLinks } from "@/components/nav-links";
 import { RoleProvider } from "@/components/role-provider";
 import { SessionBadge } from "@/components/session-badge";
 import { SupportButton } from "@/components/support-button";
+import { ViewportLock } from "@/components/viewport-lock";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -54,11 +55,21 @@ export default async function RootLayout({
 
   return (
     <html lang={locale} dir={dir}>
-      <body className="flex min-h-[100dvh] flex-col">
+      {/*
+        Fixed viewport shell: body does not scroll. Map screens fill `main`
+        (`h-full`); long pages scroll *inside* main.
+
+        Height is --app-height (set by ViewportLock), fallback 100svh — NOT
+        100dvh. On a real phone dvh jumps when the browser chrome shows/hides
+        during a map pan; DevTools "mobile mode" does not, which is why the
+        flicker only showed up on an actual device.
+      */}
+      <body className="flex max-h-[var(--app-height,100svh)] min-h-0 flex-col overflow-hidden h-[var(--app-height,100svh)]">
+        <ViewportLock />
         <I18nProvider locale={locale}>
           <RoleProvider role={role}>
             <KingdomsProvider kingdoms={kingdoms}>
-              <header className="sticky top-0 z-30 border-b bg-[var(--color-panel)]/95 backdrop-blur">
+              <header className="z-30 shrink-0 border-b bg-[var(--color-panel)]/95 backdrop-blur">
                 <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-2 px-3 sm:gap-3 sm:px-4">
                   <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                     <Link
@@ -82,7 +93,9 @@ export default async function RootLayout({
                 </div>
               </header>
 
-              <main className="flex-1">{children}</main>
+              <main className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain">
+                {children}
+              </main>
 
               {/*
                 Keep the footer to ONE short row. A tall chrome + map
