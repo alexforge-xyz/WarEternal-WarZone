@@ -120,8 +120,8 @@ function failure(err: unknown, x: number, y: number): ActionState {
 
 function revalidate() {
   revalidatePath("/");
+  revalidatePath("/nodes");
   revalidatePath("/links");
-  revalidatePath("/map");
   revalidatePath("/stats");
   notifyMapChanged();
 }

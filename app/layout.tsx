@@ -62,7 +62,7 @@ export default async function RootLayout({
                 <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-2 px-3 sm:gap-3 sm:px-4">
                   <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                     <Link
-                      href="/map"
+                      href="/"
                       className="hidden shrink-0 items-baseline gap-1.5 sm:flex"
                     >
                       <span className="font-semibold tracking-tight">

@@ -21,7 +21,7 @@ async function guard(): Promise<ActionState | null> {
 
 function revalidate() {
   revalidatePath("/");
-  revalidatePath("/map");
+  revalidatePath("/nodes");
   revalidatePath("/links");
   revalidatePath("/stats");
   notifyMapChanged();

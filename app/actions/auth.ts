@@ -73,7 +73,7 @@ export async function login(
   revalidatePath("/", "layout");
   // Redirect from the server: revalidation re-renders this route, which can
   // unmount the form before any client-side navigation effect would run.
-  redirect("/map");
+  redirect("/");
 }
 
 export async function logout(): Promise<void> {
@@ -149,7 +149,7 @@ export async function join(
   // Must be a server-side redirect: consuming the invite makes this very page
   // render "link already used", which would otherwise be the last thing the
   // new officer sees after a successful sign-up.
-  redirect("/map");
+  redirect("/");
 }
 
 /* ------------------------------- invites ------------------------------- */

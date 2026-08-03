@@ -10,7 +10,7 @@ export function InviteProblem({ reason }: { reason: MessageKey }) {
   return (
     <div className="mx-auto mt-16 w-full max-w-sm rounded-xl border bg-[var(--color-panel)] p-5 text-center">
       <p className="mb-4 text-sm text-[var(--color-danger)]">{t(reason)}</p>
-      <Link href="/map" className="btn min-h-10">
+      <Link href="/" className="btn min-h-10">
         {t("nav.map")}
       </Link>
     </div>

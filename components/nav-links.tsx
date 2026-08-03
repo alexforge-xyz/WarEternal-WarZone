@@ -18,9 +18,9 @@ type Item = {
 };
 
 const LINKS: Item[] = [
-  { href: "/map", key: "nav.map", icon: MapIcon },
+  { href: "/", key: "nav.map", icon: MapIcon },
   { href: "/stats", key: "nav.stats", icon: BarChart3 },
-  { href: "/", key: "nav.nodes", icon: Table2 },
+  { href: "/nodes", key: "nav.nodes", icon: Table2 },
   { href: "/links", key: "nav.links", icon: Share2, adminOnly: true },
   { href: "/team", key: "team.title", icon: Users, officerOnly: true },
 ];
@@ -37,7 +37,11 @@ export function NavLinks() {
   return (
     <nav className="flex items-center gap-0.5">
       {visible.map(({ href, key, icon: Icon }) => {
-        const active = pathname === href;
+        // Map is `/`; treat legacy `/map` as the same tab.
+        const active =
+          href === "/"
+            ? pathname === "/" || pathname === "/map"
+            : pathname === href;
         return (
           <Link
             key={href}

@@ -12,7 +12,7 @@ export default async function Page() {
   const me = await getUser();
   // Helpers have no business here; guests get sent to sign in.
   if (!me) redirect("/login");
-  if (me.role === "helper") redirect("/map");
+  if (me.role === "helper") redirect("/");
 
   const [userRows, inviteRows, log, h] = await Promise.all([
     db.select().from(users).orderBy(asc(users.role), asc(users.nick)),
