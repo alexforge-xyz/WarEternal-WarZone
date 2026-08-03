@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { changes, nodes, type Kingdom } from "@/db/schema";
 import { kingdomExists } from "@/db/queries";
 import { getRole } from "@/lib/auth";
+import { notifyMapChanged } from "@/lib/live-server";
 import { canMonitor } from "@/lib/roles";
 import { nowSeconds } from "@/lib/staleness";
 import type { ActionState } from "./nodes";
@@ -23,12 +24,12 @@ function author(by: string | null | undefined): string | null {
   return v || null;
 }
 
-
 function revalidate() {
   revalidatePath("/");
   revalidatePath("/map");
   revalidatePath("/links");
   revalidatePath("/stats");
+  notifyMapChanged();
 }
 
 /**

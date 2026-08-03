@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { edges, normalizePair } from "@/db/schema";
 import { getRole } from "@/lib/auth";
+import { notifyMapChanged } from "@/lib/live-server";
 import { canEdit } from "@/lib/roles";
 import type { ActionState } from "./nodes";
 
@@ -17,6 +18,7 @@ function revalidate() {
   revalidatePath("/");
   revalidatePath("/links");
   revalidatePath("/map");
+  notifyMapChanged();
 }
 
 /**

@@ -40,6 +40,7 @@ import { useKingdoms, type KingdomInfo } from "./kingdoms-provider";
 import { MapCanvas, type MapMode, type NodeStyle } from "./map-canvas";
 import { useRole } from "./role-provider";
 import { useClock } from "./use-clock";
+import { useLiveMap } from "./use-live-map";
 
 const NAME_KEY = "warzone_officer";
 
@@ -47,8 +48,8 @@ const NAME_KEY = "warzone_officer";
 const MAP_CLOCK_STEP_S = 5;
 
 export function MapScreen({
-  nodes,
-  edges,
+  nodes: initialNodes,
+  edges: initialEdges,
   serverNow,
 }: {
   nodes: NodeRow[];
@@ -58,6 +59,12 @@ export function MapScreen({
   const { t } = useT();
   const { canMonitor } = useRole();
   const kingdoms = useKingdoms();
+  // Live rows: other officers' writes arrive over SSE without a full reload.
+  // Selection / pan / zoom stay in local state and are not remounted.
+  const { nodes, edges, refresh: refreshMap } = useLiveMap(
+    initialNodes,
+    initialEdges,
+  );
   // 1s for the side panel countdowns. The map uses a stepped clock so it
   // does not rebuild ~600 SVG nodes every second on a phone.
   const now = useClock(serverNow);
@@ -85,6 +92,19 @@ export function MapScreen({
 
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const selectedNode = selected !== null ? byId.get(selected) : undefined;
+
+  /** Run a map mutation, then pull a snapshot so this tab is not waiting on SSE. */
+  const runMapAction = useCallback(
+    (fn: () => void | Promise<unknown>) => {
+      startTransition(() => {
+        void (async () => {
+          await fn();
+          await refreshMap();
+        })();
+      });
+    },
+    [refreshMap],
+  );
 
   const { colorOf, list: kingdomList, shortOf } = kingdoms;
 
@@ -159,7 +179,7 @@ export function MapScreen({
           pending={pending}
           readOnly={!canMonitor}
           onClose={() => setSelected(null)}
-          run={(fn) => startTransition(fn)}
+          run={runMapAction}
         />
       )}
 
@@ -502,7 +522,7 @@ function NodePanel({
   pending: boolean;
   readOnly: boolean;
   onClose: () => void;
-  run: (fn: () => void) => void;
+  run: (fn: () => void | Promise<unknown>) => void;
 }) {
   const { t } = useT();
   const { list: kingdomList, labelOf } = useKingdoms();

@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { kingdomExists } from "@/db/queries";
 import { NODE_KINDS, nodes, type Kingdom, type NodeKind } from "@/db/schema";
 import { getRole } from "@/lib/auth";
+import { notifyMapChanged } from "@/lib/live-server";
 import { canEdit } from "@/lib/roles";
 import type { MessageKey, Params } from "@/lib/i18n";
 
@@ -122,6 +123,7 @@ function revalidate() {
   revalidatePath("/links");
   revalidatePath("/map");
   revalidatePath("/stats");
+  notifyMapChanged();
 }
 
 /** The static map is admin-only; the UI hides it, the server enforces it. */

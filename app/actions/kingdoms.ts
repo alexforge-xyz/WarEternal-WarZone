@@ -5,6 +5,7 @@ import { and, eq, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { kingdoms, nodes } from "@/db/schema";
 import { getRole } from "@/lib/auth";
+import { notifyMapChanged } from "@/lib/live-server";
 import { canEdit } from "@/lib/roles";
 import { isHexColor } from "@/lib/constants";
 import type { ActionState } from "./nodes";
@@ -23,6 +24,7 @@ function revalidate() {
   revalidatePath("/map");
   revalidatePath("/links");
   revalidatePath("/stats");
+  notifyMapChanged();
 }
 
 type Parsed = {

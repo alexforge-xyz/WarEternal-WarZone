@@ -12,8 +12,15 @@
 #   :3002  — WarZone (this app)
 
 warzone.alexforge.xyz {
-	encode zstd gzip
-	reverse_proxy localhost:3002
+	# SSE live channel must not be compressed or buffered — encode would
+	# hold events until a flush threshold and break map/chat push.
+	handle /api/live* {
+		reverse_proxy localhost:3002
+	}
+	handle {
+		encode zstd gzip
+		reverse_proxy localhost:3002
+	}
 }
 
 # Optional www → apex-style host for this subdomain
