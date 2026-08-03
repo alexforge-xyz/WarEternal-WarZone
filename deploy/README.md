@@ -174,8 +174,20 @@ After the admin row exists, env bootstrap credentials are **ignored**.
 
 ## 8. Updates (later deploys)
 
+Usual path — one script (loads `.env.local` so `db:push` hits the same
+`SQLITE_PATH` as the service, backs up the DB, then pull → ci → push → build
+→ restart):
+
 ```bash
 cd /var/www/warzone
+bash deploy/update.sh
+```
+
+Same steps by hand:
+
+```bash
+cd /var/www/warzone
+set -a; . ./.env.local; set +a
 git pull
 npm ci
 npm run db:push
