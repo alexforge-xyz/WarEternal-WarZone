@@ -248,8 +248,8 @@ export function LinkEditor({
   );
 
   return (
-    <div className="grid h-[calc(100dvh-6.5rem)] min-h-[420px] grid-cols-1 lg:grid-cols-[1fr_320px]">
-      <div className="relative lg:border-e">
+    <div className="grid h-[calc(100svh-6rem)] max-h-[calc(100svh-6rem)] grid-cols-1 overflow-hidden lg:grid-cols-[1fr_320px]">
+      <div className="relative min-h-0 lg:border-e">
         <MapCanvas
           nodes={nodes}
           edges={localEdges}

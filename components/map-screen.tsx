@@ -225,11 +225,11 @@ export function MapScreen({
   );
 
   return (
-    // The explicit height is load-bearing: it is what makes the sidebar list
-    // scroll inside itself instead of growing the page. `body` is `min-h`, so
-    // a `flex-1` chain has nothing definite to resolve against.
-    <div className="grid h-[calc(100dvh-6.5rem)] min-h-[420px] grid-cols-1 lg:grid-cols-[1fr_340px]">
-      <div className="relative lg:border-e">
+    // Explicit viewport height (header ~3.5rem + footer ~2.5rem). Never use
+    // min-h-[420px] here — on short phones it grows past 100dvh and the
+    // browser steals touches for page scroll instead of map pan.
+    <div className="grid h-[calc(100svh-6rem)] max-h-[calc(100svh-6rem)] grid-cols-1 overflow-hidden lg:grid-cols-[1fr_340px]">
+      <div className="relative min-h-0 lg:border-e">
         <MapCanvas
           nodes={nodes}
           edges={edges}

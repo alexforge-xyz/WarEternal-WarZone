@@ -9,5 +9,7 @@ export async function setLocale(value: string) {
     path: "/",
     maxAge: 60 * 60 * 24 * 365,
     sameSite: "lax",
+    // Readable by the document for the hard-reload fallback in LangSwitcher.
+    httpOnly: false,
   });
 }

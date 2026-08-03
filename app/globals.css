@@ -29,6 +29,8 @@
 html,
 body {
   height: 100%;
+  /* Reduce iOS overscroll fighting the map. */
+  overscroll-behavior: none;
 }
 
 body {

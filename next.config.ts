@@ -1,9 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Optional: add your LAN IP here in a local override if you test the map
-  // from a phone against `next dev` on another machine. Do not commit private
-  // network addresses.
+  // Phone / LAN testing of `next dev` (HMR and /_next/*). Dev-only; production
+  // is unaffected. Add another host if your LAN IP changes.
+  allowedDevOrigins: ["192.168.1.27"],
 };
 
 export default nextConfig;

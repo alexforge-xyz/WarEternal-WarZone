@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { AUTHOR, GITHUB_URL, PROJECT_NAME } from "@/lib/constants";
-import { LOCALE_META, translate } from "@/lib/i18n";
+import { LOCALE_META } from "@/lib/i18n";
 import { getLocale } from "@/lib/locale";
 import { getRole } from "@/lib/auth";
 import { getKingdoms } from "@/db/queries";
@@ -19,6 +19,9 @@ export const metadata: Metadata = {
   description: `Conquest map for War Eternal — WarZone. ${AUTHOR}`,
   robots: { index: false, follow: false },
 };
+
+// Locale (and role) come from cookies — never statically cache the shell.
+export const dynamic = "force-dynamic";
 
 export const viewport: Viewport = {
   // The map handles its own zoom; locking the page keeps a two-finger gesture
@@ -81,18 +84,24 @@ export default async function RootLayout({
 
               <main className="flex-1">{children}</main>
 
-              <footer className="border-t px-4 py-3 text-center text-[11px] text-[var(--color-text-dim)]">
-                <p>
-                  {PROJECT_NAME} · {AUTHOR} ·{" "}
-                  {translate(locale, "app.disclaimer")}
-                </p>
-                <p className="mt-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+              {/*
+                Keep the footer to ONE short row. A tall chrome + map
+                `min-h-[420px]` / wrong calc makes the page taller than the
+                phone viewport — the browser then steals every touch for
+                document scroll, and the map looks “frozen”.
+              */}
+              <footer className="shrink-0 border-t px-3 py-2 text-center text-[10px] leading-snug text-[var(--color-text-dim)] sm:text-[11px]">
+                <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5">
+                  <span>
+                    {PROJECT_NAME} · {AUTHOR}
+                  </span>
+                  <span aria-hidden>·</span>
                   <Link
                     href="/legal"
                     className="underline-offset-2 hover:text-[var(--color-text-soft)] hover:underline"
                     lang="en"
                   >
-                    Legal notice
+                    Legal
                   </Link>
                   <span aria-hidden>·</span>
                   <Link
@@ -108,7 +117,7 @@ export default async function RootLayout({
                     className="underline-offset-2 hover:text-[var(--color-text-soft)] hover:underline"
                     lang="en"
                   >
-                    Terms of use
+                    Terms
                   </Link>
                   <span aria-hidden>·</span>
                   <a

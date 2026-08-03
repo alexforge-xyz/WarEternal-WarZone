@@ -106,10 +106,13 @@ export function MapCanvas({
   empty?: React.ReactNode;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ w: 900, h: 600 });
   const [view, setView] = useState<View>({ x: 0, y: 0, w: 100, h: 100 });
   const viewRef = useRef(view);
   viewRef.current = view;
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
 
   const pts = useMemo<Pt[]>(
     () =>
@@ -130,13 +133,18 @@ export function MapCanvas({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
+    const apply = (w: number, h: number) => {
+      if (w < 2 || h < 2) return;
+      setSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+      setMeasured(true);
+    };
     const ro = new ResizeObserver(([entry]) => {
       const r = entry.contentRect;
-      if (!r.width || !r.height) return;
-      setSize({ w: r.width, h: r.height });
-      setMeasured(true);
+      apply(r.width, r.height);
     });
     ro.observe(el);
+    const br = el.getBoundingClientRect();
+    apply(br.width, br.height);
     return () => ro.disconnect();
   }, []);
 
@@ -220,9 +228,14 @@ export function MapCanvas({
   /* ---------------- drag & pinch ---------------- */
 
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const drag = useRef<{ sx: number; sy: number; vx: number; vy: number } | null>(
-    null,
-  );
+  const drag = useRef<{
+    sx: number;
+    sy: number;
+    vx: number;
+    vy: number;
+    /** "touch" needs early capture or iOS steals the gesture for page scroll. */
+    pointerType: string;
+  } | null>(null);
   const pinch = useRef<{
     dist: number;
     mx: number;
@@ -231,23 +244,11 @@ export function MapCanvas({
   } | null>(null);
   const moved = useRef(false);
 
-  function localXY(e: React.PointerEvent) {
+  function localFromClient(clientX: number, clientY: number) {
     const rect = wrapRef.current!.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    return { x: clientX - rect.left, y: clientY - rect.top };
   }
 
-  /**
-   * Capture is taken **only once a gesture is really under way**, never on the
-   * bare press.
-   *
-   * While an element holds the pointer capture the browser dispatches the
-   * `click` to *it* rather than to what was under the cursor, so capturing on
-   * pointerdown silently ate every node and road click on desktop — a phone
-   * still worked, because its click is synthesised from the touch sequence.
-   * Deferring it also lands the right behaviour for free: a press that turned
-   * into a drag has captured by then, so its click goes to the surface and
-   * selects nothing.
-   */
   function capture(e: React.PointerEvent) {
     const el = e.currentTarget as Element;
     if (!el.hasPointerCapture(e.pointerId)) el.setPointerCapture(e.pointerId);
@@ -255,17 +256,25 @@ export function MapCanvas({
 
   function onPointerDown(e: React.PointerEvent) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
-    pointers.current.set(e.pointerId, localXY(e));
+    // Real phones start a document scroll the moment the finger moves, unless
+    // we own the pointer *now*. Desktop still defers capture so node clicks
+    // hit the <g>, not the svg surface (see onPointerMove).
+    if (e.pointerType === "touch" || e.pointerType === "pen") {
+      e.preventDefault();
+      capture(e);
+    }
+    pointers.current.set(e.pointerId, localFromClient(e.clientX, e.clientY));
 
     if (pointers.current.size === 2) {
-      // A second finger is a pinch, never a click — safe to hold on to.
       capture(e);
       const [a, b] = [...pointers.current.values()];
+      const sw = Math.max(sizeRef.current.w, 1);
+      const sh = Math.max(sizeRef.current.h, 1);
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       pinch.current = {
         dist,
-        mx: (a.x + b.x) / 2 / size.w,
-        my: (a.y + b.y) / 2 / size.h,
+        mx: (a.x + b.x) / 2 / sw,
+        my: (a.y + b.y) / 2 / sh,
         view: viewRef.current,
       };
       drag.current = null;
@@ -274,14 +283,26 @@ export function MapCanvas({
     }
     if (pointers.current.size === 1) {
       const v = viewRef.current;
-      drag.current = { sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y };
+      drag.current = {
+        sx: e.clientX,
+        sy: e.clientY,
+        vx: v.x,
+        vy: v.y,
+        pointerType: e.pointerType,
+      };
       moved.current = false;
     }
   }
 
   function onPointerMove(e: React.PointerEvent) {
     if (!pointers.current.has(e.pointerId)) return;
-    pointers.current.set(e.pointerId, localXY(e));
+    if (e.pointerType === "touch" || e.pointerType === "pen") {
+      e.preventDefault();
+    }
+    pointers.current.set(e.pointerId, localFromClient(e.clientX, e.clientY));
+
+    const sw = Math.max(sizeRef.current.w, 1);
+    const sh = Math.max(sizeRef.current.h, 1);
 
     const p = pinch.current;
     if (p && pointers.current.size >= 2) {
@@ -289,12 +310,10 @@ export function MapCanvas({
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       const w = Math.min(Math.max((p.view.w * p.dist) / dist, MIN_W), MAX_W);
       const h = w * (p.view.h / p.view.w);
-      // Keep whatever sat under the starting midpoint under the current one:
-      // pinch and two-finger pan in a single gesture.
       const anchorX = p.view.x + p.view.w * p.mx;
       const anchorY = p.view.y + p.view.h * p.my;
-      const cmx = (a.x + b.x) / 2 / size.w;
-      const cmy = (a.y + b.y) / 2 / size.h;
+      const cmx = (a.x + b.x) / 2 / sw;
+      const cmy = (a.y + b.y) / 2 / sh;
       setView({ x: anchorX - w * cmx, y: anchorY - h * cmy, w, h });
       return;
     }
@@ -303,33 +322,56 @@ export function MapCanvas({
     if (!d) return;
     const dx = e.clientX - d.sx;
     const dy = e.clientY - d.sy;
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
-      // Past the slop threshold this is a pan, not a click: take the pointer
-      // so it keeps reporting once the cursor leaves the surface.
+    const slop = d.pointerType === "touch" || d.pointerType === "pen" ? 10 : 4;
+    if (Math.abs(dx) > slop || Math.abs(dy) > slop) {
       moved.current = true;
-      capture(e);
+      // Mouse: capture only once it's clearly a drag (keeps node clicks working).
+      if (d.pointerType === "mouse") capture(e);
     }
+    if (!moved.current) return;
     const v = viewRef.current;
     setView({
       ...v,
-      x: d.vx - (dx * v.w) / size.w,
-      y: d.vy - (dy * v.h) / size.h,
+      x: d.vx - (dx * v.w) / sw,
+      y: d.vy - (dy * v.h) / sh,
     });
   }
 
+  function pickNodeAtClient(clientX: number, clientY: number) {
+    // Touch capture steals the synthetic click target; hit-test nodes ourselves.
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect || rect.width < 1 || rect.height < 1) return;
+    const v = viewRef.current;
+    const mx = v.x + ((clientX - rect.left) / rect.width) * v.w;
+    const my = v.y + ((clientY - rect.top) / rect.height) * v.h;
+    const k = v.w / Math.max(rect.width, 1);
+    let best: { id: number; d2: number } | null = null;
+    for (const { node, px, py } of pts) {
+      const r = MARK_PX[node.kind] * k * 1.6;
+      const dx = mx - px;
+      const dy = my - py;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= r * r && (!best || d2 < best.d2)) {
+        best = { id: node.id, d2 };
+      }
+    }
+    if (best) onSelectNode(best.id);
+  }
+
   function onPointerUp(e: React.PointerEvent) {
+    const wasTap =
+      !moved.current &&
+      (e.pointerType === "touch" || e.pointerType === "pen") &&
+      pointers.current.size <= 1 &&
+      !pinch.current;
     pointers.current.delete(e.pointerId);
     const el = e.currentTarget as Element;
     if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
     if (pointers.current.size < 2) pinch.current = null;
     if (pointers.current.size === 0) drag.current = null;
+    if (wasTap) pickNodeAtClient(e.clientX, e.clientY);
   }
 
-  /**
-   * A press that never became a drag holds no capture, so releasing it outside
-   * the surface produces no pointerup here. Forget it on the way out, or the
-   * next press would look like a second finger and start a phantom pinch.
-   */
   function onPointerLeave(e: React.PointerEvent) {
     if ((e.currentTarget as Element).hasPointerCapture(e.pointerId)) return;
     pointers.current.delete(e.pointerId);
@@ -337,12 +379,30 @@ export function MapCanvas({
     if (pointers.current.size === 0) drag.current = null;
   }
 
+  // Non-passive touchmove: iOS still rubber-bands the document unless we call
+  // preventDefault here (touch-action alone is not enough on some versions).
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const block = (ev: TouchEvent) => {
+      ev.preventDefault();
+    };
+    el.addEventListener("touchmove", block, { passive: false });
+    return () => {
+      el.removeEventListener("touchmove", block);
+    };
+  }, []);
+
   /** SVG units per CSS pixel — keeps marks and labels a constant screen size. */
   const k = view.w / Math.max(size.w, 1);
   const detail = k < NAME_UNTIL ? "full" : k < LEVEL_UNTIL ? "compact" : "none";
 
   return (
-    <div className="relative h-full w-full" ref={wrapRef}>
+    <div
+      className="relative h-full w-full overscroll-none"
+      ref={wrapRef}
+      style={{ touchAction: "none", WebkitUserSelect: "none", userSelect: "none" }}
+    >
       {/*
         Absolutely positioned on purpose. An in-flow <svg> with a viewBox has
         an *intrinsic aspect ratio*, so it reports a content height — and this
@@ -353,7 +413,9 @@ export function MapCanvas({
         this wrapper already is.
       */}
       <svg
-        className="absolute inset-0 h-full w-full touch-none select-none"
+        ref={svgRef}
+        className="absolute inset-0 h-full w-full select-none"
+        style={{ touchAction: "none" }}
         viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

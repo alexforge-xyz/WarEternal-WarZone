@@ -8,11 +8,22 @@ import {
 } from "./i18n";
 
 /**
- * Interface language: an explicit choice (cookie) wins, otherwise the best
- * match from Accept-Language, otherwise the default.
+ * Interface language for the first server paint.
+ * Priority: cookie (user chose before) → Accept-Language → default.
+ * After hydration the client may override from localStorage (see I18nProvider):
+ * real phones often drop cookies, so storage is the durable choice.
  */
 export async function getLocale(): Promise<Locale> {
-  const fromCookie = (await cookies()).get(LOCALE_COOKIE)?.value;
+  const raw = (await cookies()).get(LOCALE_COOKIE)?.value;
+  // Client may write encodeURIComponent("ru") → "ru"; decode safely either way.
+  let fromCookie: string | undefined;
+  if (raw) {
+    try {
+      fromCookie = decodeURIComponent(raw).trim().toLowerCase();
+    } catch {
+      fromCookie = raw.trim().toLowerCase();
+    }
+  }
   if (isLocale(fromCookie)) return fromCookie;
 
   const accept = (await headers()).get("accept-language") ?? "";
