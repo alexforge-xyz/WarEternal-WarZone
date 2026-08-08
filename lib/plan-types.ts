@@ -21,6 +21,11 @@ export type PlanNoteView = {
 
 export type PlanSnapshot = {
   planningKingdomId: number | null;
+  /**
+   * Auto-routing walks through shielded enemy gates as if they were open.
+   * Shared setting — see `plan_settings.bypass_shields`.
+   */
+  bypassShields: boolean;
   paths: PlanPathView[];
   /** Shared sticky notes on nodes (clouds on the map). */
   notes: PlanNoteView[];

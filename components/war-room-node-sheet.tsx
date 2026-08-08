@@ -15,6 +15,7 @@ import {
   removeNodeFromPlan,
 } from "@/app/actions/plan";
 import type { NodeRow } from "@/db/schema";
+import type { MessageKey, Params } from "@/lib/i18n";
 import type { PlanNoteView, PlanSnapshot } from "@/lib/plan-types";
 import { useT } from "./i18n-provider";
 
@@ -45,14 +46,21 @@ export function WarRoomNodeSheet({
   const [error, setError] = useState<string | null>(null);
 
   function run(
-    fn: () => Promise<{ ok: boolean; plan?: PlanSnapshot; error?: string }>,
+    fn: () => Promise<{
+      ok: boolean;
+      plan?: PlanSnapshot;
+      error?: MessageKey;
+      params?: Params;
+    }>,
   ) {
     setError(null);
     start(() => {
       void (async () => {
         const res = await fn();
         if (res.ok && res.plan) onPlan(res.plan);
-        else if (!res.ok && res.error) setError(t(res.error as "plan.noteBlank"));
+        // `params` carries things like the name of the gate that blocked the
+        // route; without it the message renders a literal "{name}".
+        else if (!res.ok && res.error) setError(t(res.error, res.params));
       })();
     });
   }

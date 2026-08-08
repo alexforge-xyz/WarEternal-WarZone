@@ -10,6 +10,7 @@ import { KingdomsPanel } from "./kingdoms-panel";
 import { NodeForm } from "./node-form";
 import { NodeTable } from "./node-table";
 import { useRole } from "./role-provider";
+import { SeedExportButton } from "./seed-export-button";
 
 export function NodesScreen({
   nodes,
@@ -86,6 +87,8 @@ export function NodesScreen({
           />
         )}
       </div>
+
+      {canEdit && <SeedExportButton />}
 
       {canEdit && <KingdomsPanel nodes={nodes} />}
 

@@ -109,6 +109,7 @@ export async function resolveDefaultPlanningKingdomId(): Promise<number | null> 
  */
 export async function getPlanSettings(): Promise<{
   planningKingdomId: number | null;
+  bypassShields: boolean;
   row: PlanSettingsRow | null;
 }> {
   const [row] = await db
@@ -117,18 +118,22 @@ export async function getPlanSettings(): Promise<{
     .where(eq(planSettings.id, 1))
     .limit(1);
   if (row) {
-    return { planningKingdomId: row.planningKingdomId, row };
+    return {
+      planningKingdomId: row.planningKingdomId,
+      bypassShields: row.bypassShields,
+      row,
+    };
   }
   const fallback = await resolveDefaultPlanningKingdomId();
   await db.insert(planSettings).values({
     id: 1,
     planningKingdomId: fallback,
   });
-  return { planningKingdomId: fallback, row: null };
+  return { planningKingdomId: fallback, bypassShields: false, row: null };
 }
 
 export async function getPlanSnapshot(): Promise<PlanSnapshot> {
-  const { planningKingdomId } = await getPlanSettings();
+  const { planningKingdomId, bypassShields } = await getPlanSettings();
   const [paths, steps, noteRows] = await Promise.all([
     db.select().from(planPaths).orderBy(asc(planPaths.sort), asc(planPaths.id)),
     db
@@ -155,6 +160,7 @@ export async function getPlanSnapshot(): Promise<PlanSnapshot> {
 
   return {
     planningKingdomId,
+    bypassShields,
     paths: paths.map((p: PlanPathRow) => ({
       id: p.id,
       label: p.label,

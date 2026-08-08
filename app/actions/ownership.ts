@@ -1,14 +1,13 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { changes, nodes, type Kingdom } from "@/db/schema";
 import { kingdomExists } from "@/db/queries";
 import { getRole } from "@/lib/auth";
 import { notifyMapChanged } from "@/lib/live-server";
 import { canMonitor } from "@/lib/roles";
-import { nowSeconds } from "@/lib/staleness";
+import { needsCheck, nowSeconds } from "@/lib/staleness";
 import type { ActionState } from "./nodes";
 
 /** Monitoring the map is open from `helper` upwards. */
@@ -24,11 +23,21 @@ function author(by: string | null | undefined): string | null {
   return v || null;
 }
 
+/**
+ * Announce the write — and *only* announce it.
+ *
+ * This used to `revalidatePath` four routes. All four are `force-dynamic`, so
+ * nothing was cached to bust; what it actually did was make Next re-render and
+ * re-stream the whole map page on every single tap, 231 nodes and 352 roads,
+ * on top of the snapshot the client was already pulling. Three refreshes for
+ * one changed field, and the tap sat there looking ignored while they landed.
+ *
+ * Freshness is the live channel's job: `notifyMapChanged` bumps the version,
+ * every open tab pulls `/api/map`, and the tab that wrote pulls immediately
+ * without waiting for its own event. Other routes are dynamic, so a later
+ * navigation renders them from the database regardless.
+ */
 function revalidate() {
-  revalidatePath("/");
-  revalidatePath("/nodes");
-  revalidatePath("/links");
-  revalidatePath("/stats");
   notifyMapChanged();
 }
 
@@ -97,6 +106,54 @@ export async function confirmNode(
 
   revalidate();
   return { ok: true };
+}
+
+/**
+ * Confirm every node currently flagged for a re-check, in one write.
+ *
+ * Most of the flagged list is usually nodes deep inside somebody's territory
+ * that physically cannot have changed hands — nothing borders them but their
+ * owner's own cities. Clearing those one tap at a time is a hundred taps of
+ * pure noise, and the predictable result is that officers stop clearing any of
+ * them and the flag stops meaning anything.
+ *
+ * Only nodes that actually need a check are touched: a shielded node is not
+ * flagged in the first place (see `needsCheck`), and a node confirmed an hour
+ * ago keeps its own, more honest, timestamp instead of being backdated to now.
+ *
+ * One log row, not one per node. 200 identical `confirm` lines would bury the
+ * ownership changes the log exists to show; the count is the interesting part.
+ */
+export async function confirmAllStale(
+  by?: string | null,
+): Promise<ActionState & { count?: number }> {
+  const denied = await guard();
+  if (denied) return denied;
+
+  const at = nowSeconds();
+  const rows = await db
+    .select({
+      id: nodes.id,
+      checkedAt: nodes.checkedAt,
+      shieldUntil: nodes.shieldUntil,
+    })
+    .from(nodes);
+
+  const ids = rows
+    .filter((r) => needsCheck(r.checkedAt, r.shieldUntil, at))
+    .map((r) => r.id);
+  if (ids.length === 0) return { ok: true, count: 0 };
+
+  await db.update(nodes).set({ checkedAt: at }).where(inArray(nodes.id, ids));
+  await db.insert(changes).values({
+    nodeId: ids[0],
+    kind: "confirm",
+    by: author(by),
+    at,
+  });
+
+  revalidate();
+  return { ok: true, count: ids.length };
 }
 
 /** Long shields are read off the game in days, so the cap is one too. */

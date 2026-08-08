@@ -42,6 +42,23 @@ export function KingdomsProvider({
 }) {
   const { t } = useT();
 
+  /**
+   * Keyed on the line-up's *contents*, not on the array React handed us.
+   *
+   * The layout rebuilds this array on every server render, so any RSC refresh
+   * — a navigation, a server action — produced a brand-new `colorOf`, which
+   * flowed into the map's `styleFor` and told it all 231 marks had changed.
+   * The kingdoms had not changed. Comparing the line-up itself keeps the
+   * context stable until an admin genuinely edits one.
+   */
+  const signature = kingdoms
+    .map((k) => `${k.id}:${k.number}:${k.name ?? ""}:${k.color}`)
+    .join("|");
+
+  // `kingdoms` is deliberately absent from the deps: an unchanged signature
+  // means an identical line-up, so the captured array is equivalent to the
+  // current one — and holding on to it is the entire point.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const value = useMemo<Ctx>(() => {
     const byId = new Map(kingdoms.map((k) => [k.id, k]));
     const get = (id: number | null | undefined) =>
@@ -61,7 +78,7 @@ export function KingdomsProvider({
         return k.name?.trim() || t("kingdom.n", { n: k.number });
       },
     };
-  }, [kingdoms, t]);
+  }, [signature, t]);
 
   return (
     <KingdomsCtx.Provider value={value}>{children}</KingdomsCtx.Provider>

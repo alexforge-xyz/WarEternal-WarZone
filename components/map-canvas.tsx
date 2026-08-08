@@ -11,6 +11,7 @@ import {
 import type { EdgeRow, NodeKind, NodeRow } from "@/db/schema";
 import { BATTLE_COLOR, BUFF_COLOR } from "@/lib/constants";
 import { dominantBuff, type BuffField } from "./buff-icon";
+import { useT } from "./i18n-provider";
 
 /**
  * Shared map surface: coordinate layout, pan, wheel zoom, pinch zoom, and the
@@ -187,6 +188,43 @@ const TERRITORY_FROM = 2;
 const MIN_W = 4;
 const MAX_W = 400_000;
 
+/**
+ * How far past the screen edge the board is still drawn, as a share of the
+ * view. The rendered band is the viewport grown by this much on every side.
+ *
+ * Culling was tried once before and taken out again, because a pan is DOM-only
+ * until the finger lifts: React had not re-rendered, so panning toward the edge
+ * pulled *nothing* into view and left empty strips. The margin alone does not
+ * fix that — it only buys time. What fixes it is watching the live camera
+ * (`paintCamera`) and committing the moment it leaves the band, so the next
+ * ring of nodes is mounted before there is any gap to see.
+ *
+ * 0.35 makes the band twice the viewport's area. Bigger wastes the saving;
+ * smaller commits so often that the mid-gesture re-renders cost more than the
+ * nodes they save — and they are only cheap because `MapNode` is memoised, so
+ * a commit mounts the arrivals and walks past everything already there.
+ */
+const CULL_MARGIN = 0.35;
+
+/** Slack in CSS px so a mark whose centre is just off-screen still draws. */
+const CULL_PAD_PX = 60;
+
+/** The view grown by `CULL_MARGIN` — what actually gets rendered. */
+function bandFor(v: View): View {
+  const mx = v.w * CULL_MARGIN;
+  const my = v.h * CULL_MARGIN;
+  return { x: v.x - mx, y: v.y - my, w: v.w + 2 * mx, h: v.h + 2 * my };
+}
+
+function bandHolds(band: View, v: View): boolean {
+  return (
+    v.x >= band.x &&
+    v.y >= band.y &&
+    v.x + v.w <= band.x + band.w &&
+    v.y + v.h <= band.y + band.h
+  );
+}
+
 function detailOf(v: View, cssW: number): Detail {
   const k = v.w / Math.max(cssW, 1);
   return k < NAME_UNTIL ? "full" : k < LEVEL_UNTIL ? "compact" : "none";
@@ -284,6 +322,29 @@ function MapGlyphDefs() {
           {...stroke}
           d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"
         />
+      </symbol>
+      {/*
+        The "needs a check" badge, as one reusable shape.
+
+        It used to be a group, a circle and an SVG `<text>` holding "!", per
+        flagged node — and when every node is flagged that is 231 pieces of
+        text to shape and lay out, at a font size that changes with every zoom
+        step. It was measurable from the couch: clearing the flags made the
+        board visibly smoother. The mark is a glyph, so it is drawn like the
+        other glyphs — geometry, no font, one `<use>` per node.
+      */}
+      <symbol id="mg-flag" viewBox="0 0 24 24">
+        <circle
+          cx="12"
+          cy="12"
+          r="10.6"
+          fill="#eab308"
+          stroke="#0b0f17"
+          strokeWidth="2"
+        />
+        {/* The bang: a tapered bar and its dot, as plain fills. */}
+        <path fill="#0b0f17" d="M10.5 5.2h3l-0.55 9h-1.9z" />
+        <circle cx="12" cy="17.4" r="1.55" fill="#0b0f17" />
       </symbol>
       {/* buff — matches BUFF_ICONS in components/buff-icon.tsx */}
       <symbol id="mg-buffAtk" viewBox="0 0 24 24">
@@ -612,6 +673,340 @@ function TerritoryLayer({ groups }: { groups: [string, Pt[]][] }) {
   );
 }
 
+/**
+ * Roads, as their own memoised layer.
+ *
+ * Pan is the gesture this exists for. Panning does not change `k`, so a
+ * pan-end commit leaves every prop here identical and React walks past 352
+ * lines instead of rebuilding them — which is most of what used to make the
+ * map hitch the instant a finger came off it.
+ */
+const EdgesLayer = memo(function EdgesLayer({
+  edges,
+  byId,
+  k,
+  selectedId,
+  onEdgeTap,
+  band,
+}: {
+  edges: EdgeRow[];
+  byId: Map<number, Pt>;
+  k: number;
+  selectedId: number | null;
+  onEdgeTap: ((edge: EdgeRow) => void) | null;
+  /** Render region, or null for "draw the whole board". */
+  band: View | null;
+}) {
+  return (
+    <g>
+      {edges.map((edge) => {
+        const a = byId.get(edge.aId);
+        const b = byId.get(edge.bId);
+        if (!a || !b) return null;
+        // By the segment's own box, not by its endpoints: a long road can have
+        // both ends off-screen and still cross the middle of the view.
+        if (
+          band &&
+          (Math.max(a.px, b.px) < band.x ||
+            Math.min(a.px, b.px) > band.x + band.w ||
+            Math.max(a.py, b.py) < band.y ||
+            Math.min(a.py, b.py) > band.y + band.h)
+        ) {
+          return null;
+        }
+        const touches = selectedId === edge.aId || selectedId === edge.bId;
+        // Stroke in world units (× k ≈ screen px). Avoid non-scaling-stroke
+        // under a live CSS transform — it forces extra work on Android GPUs.
+        const sw = (touches ? 4.8 : 3) * k;
+        return (
+          <g key={`${edge.aId}-${edge.bId}`}>
+            <line
+              x1={a.px}
+              y1={a.py}
+              x2={b.px}
+              y2={b.py}
+              stroke={touches ? "#38bdf8" : "#3f4d69"}
+              strokeWidth={sw}
+              strokeLinecap="round"
+            />
+            {onEdgeTap && (
+              <line
+                x1={a.px}
+                y1={a.py}
+                x2={b.px}
+                y2={b.py}
+                stroke="transparent"
+                strokeWidth={14 * k}
+                strokeLinecap="round"
+                style={{ cursor: "pointer" }}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  onEdgeTap(edge);
+                }}
+              />
+            )}
+          </g>
+        );
+      })}
+    </g>
+  );
+});
+
+type MapNodeProps = {
+  node: NodeRow;
+  px: number;
+  py: number;
+  s: NodeStyle;
+  isSel: boolean;
+  mode: MapMode;
+  far: boolean;
+  k: number;
+  boost: number;
+  detail: Detail;
+  onTap: (id: number) => void;
+};
+
+/**
+ * For a node the parent has no style for. A module constant, not an inline
+ * literal: a fresh object every render would defeat `MapNode`'s memo.
+ */
+const FALLBACK_STYLE: NodeStyle = { fill: "#64748b" };
+
+/** Fields of a node mark that actually reach the screen. */
+function sameStyle(a: NodeStyle, b: NodeStyle): boolean {
+  return (
+    a.fill === b.fill &&
+    a.ring === b.ring &&
+    a.outline === b.outline &&
+    !!a.flag === !!b.flag &&
+    !!a.shield === !!b.shield &&
+    !!a.battle === !!b.battle &&
+    !!a.plan === !!b.plan &&
+    !!a.note === !!b.note &&
+    a.noteCount === b.noteCount
+  );
+}
+
+/**
+ * Compare by value, not by identity, and only over what a mark draws.
+ *
+ * Both of the things that re-render this component hand it fresh objects that
+ * mean nothing new: every snapshot pull replaces all 231 `NodeRow`s, and the
+ * 5s map clock rebuilds all 231 `NodeStyle`s. Identity comparison would treat
+ * both as a full redraw of the board; this treats them as what they are —
+ * nothing changed — and the board stays put.
+ */
+function sameMapNode(a: MapNodeProps, b: MapNodeProps): boolean {
+  return (
+    a.px === b.px &&
+    a.py === b.py &&
+    a.isSel === b.isSel &&
+    a.mode === b.mode &&
+    a.far === b.far &&
+    a.k === b.k &&
+    a.boost === b.boost &&
+    a.detail === b.detail &&
+    a.onTap === b.onTap &&
+    a.node.id === b.node.id &&
+    a.node.kind === b.node.kind &&
+    a.node.level === b.node.level &&
+    a.node.name === b.node.name &&
+    a.node.buffAtk === b.node.buffAtk &&
+    a.node.buffDef === b.node.buffDef &&
+    a.node.buffHp === b.node.buffHp &&
+    sameStyle(a.s, b.s)
+  );
+}
+
+/** One node mark: disc or bare glyph, plus whatever is happening to it. */
+const MapNode = memo(function MapNode({
+  node,
+  px,
+  py,
+  s,
+  isSel,
+  mode,
+  far,
+  k,
+  boost,
+  detail,
+  onTap,
+}: MapNodeProps) {
+  const buff = mode === "buff" ? dominantBuff(node) : null;
+  // In buff mode a node that grants nothing shrinks out of the way: the whole
+  // point of the view is spotting what is worth taking.
+  const r =
+    MARK_PX[node.kind] * boost * k * (mode === "buff" && !buff ? 0.45 : 1);
+  const glyphId =
+    mode === "buff"
+      ? buff
+        ? BUFF_GLYPH_ID[buff.field]
+        : null
+      : KIND_GLYPH_ID[node.kind];
+  const gSize = r * (far ? FAR_GLYPH_RATIO : GLYPH_RATIO);
+
+  return (
+    <g
+      transform={`translate(${px} ${py})`}
+      style={{ cursor: "pointer" }}
+      onClick={(ev) => {
+        ev.stopPropagation();
+        onTap(node.id);
+      }}
+    >
+      {/* A dome up close, a thin collar far out: at territory zoom
+          the full-size domes are wider than the gaps between nodes
+          and drown the very colour the view exists to show. */}
+      {s.shield &&
+        (far ? (
+          <circle
+            r={gSize * 0.72}
+            fill="none"
+            stroke="#7dd3fc"
+            strokeOpacity={0.75}
+            strokeWidth={1.4 * k}
+          />
+        ) : (
+          <circle
+            r={r * 2.3}
+            fill="#38bdf8"
+            fillOpacity={0.16}
+            stroke="#7dd3fc"
+            strokeWidth={1.2 * k}
+          />
+        ))}
+      {isSel && (
+        <circle
+          r={r * 2.7}
+          fill="none"
+          stroke="#38bdf8"
+          strokeWidth={1.8 * k}
+          strokeDasharray={`${3 * k} ${2.5 * k}`}
+        />
+      )}
+      {/* Outline (e.g. link-editor neighbours) must survive far zoom
+          when discs are off. */}
+      {far && s.outline && (
+        <circle
+          r={gSize * 0.9}
+          fill="none"
+          stroke={s.outline}
+          strokeWidth={1.8 * k}
+          strokeOpacity={0.95}
+        />
+      )}
+      {/* Far out the ground is already the kingdom's colour, so the
+          disc and its ring would only repeat it — at the density
+          where they overlap into a pile. The glyph alone, half
+          faded, still says what the object is. */}
+      {!far && s.ring && (
+        <circle r={r * 1.55} fill="none" stroke={s.ring} strokeWidth={2 * k} />
+      )}
+      {!far && (
+        // Disc carries the colour, glyph carries the meaning.
+        // Plan: soft white overlay that breathes — kingdom fill stays
+        // underneath so ownership is still readable.
+        <>
+          <circle
+            r={r}
+            fill={s.fill}
+            stroke={s.outline ?? "#0b0f17"}
+            strokeWidth={1.6 * k}
+          />
+          {s.plan && (
+            <circle
+              r={r}
+              fill="#e8edf5"
+              className="wz-plan-fill"
+              style={{ pointerEvents: "none" }}
+            />
+          )}
+        </>
+      )}
+      {glyphId && (
+        <use
+          href={glyphId}
+          x={-gSize / 2}
+          y={-gSize / 2}
+          width={gSize}
+          height={gSize}
+          style={{
+            color: far ? FAR_GLYPH_INK : GLYPH_INK,
+            opacity: far ? farGlyphOpacity(k) : 1,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+      {s.plan && <PlanMark size={r * (far ? PLAN_SPAN_FAR : PLAN_SPAN)} />}
+      {s.battle && (
+        <BattleMark size={r * (far ? BATTLE_SPAN_FAR : BATTLE_SPAN)} />
+      )}
+      {s.note && (
+        <NoteCloud
+          size={r * (far ? 1.8 : 2.2)}
+          count={s.noteCount ?? 1}
+          k={k}
+          markR={r}
+        />
+      )}
+      {!far && s.flag && (
+        <use
+          href="#mg-flag"
+          x={r * 1.5 - 5.5 * k}
+          y={-r * 1.6 - 5.5 * k}
+          width={11 * k}
+          height={11 * k}
+          style={{ pointerEvents: "none" }}
+        />
+      )}
+      {/* Finger-sized hit area for mouse; touch uses pickNodeAtClient. */}
+      <circle r={Math.max(r * 1.6, 22 * k)} fill="transparent" />
+
+      {/* Far out the board is territory, not a list of objects:
+          no text at all, the colour under the glyph says it. */}
+      {!far &&
+        (mode === "buff"
+          ? buff &&
+            detail !== "none" && (
+              // The percent *is* the label here, and it is short
+              // enough to survive as far out as a level does.
+              <text
+                y={r + 15 * k}
+                textAnchor="middle"
+                fontSize={14 * k}
+                fontWeight="700"
+                fill={BUFF_COLOR[buff.field]}
+                style={{ pointerEvents: "none" }}
+              >
+                {buff.value}%
+              </text>
+            )
+          : detail !== "none" && (
+              <text
+                y={r + 15 * k}
+                textAnchor="middle"
+                fontSize={13 * k}
+                fill={isSel ? "#e6ebf5" : "#94a3b8"}
+                style={{ pointerEvents: "none" }}
+              >
+                {detail === "full" ? (
+                  <>
+                    {node.name}
+                    <tspan fill="#64748b"> {node.level}</tspan>
+                  </>
+                ) : (
+                  // Zoomed out the name is unreadable anyway; the
+                  // level is what you scan the map for.
+                  <tspan fontWeight="700" fill="#8fa3bf">
+                    {node.level}
+                  </tspan>
+                )}
+              </text>
+            ))}
+    </g>
+  );
+}, sameMapNode);
+
 function MapCanvasImpl({
   nodes,
   edges,
@@ -679,15 +1074,28 @@ function MapCanvasImpl({
   status?: React.ReactNode;
   empty?: React.ReactNode;
 }) {
+  // The one string this component owns: parents pass `status` / `empty` as
+  // nodes, but only the canvas knows when it has finished framing itself.
+  const { t } = useT();
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const cameraRef = useRef<SVGGElement>(null);
   const [size, setSize] = useState({ w: 900, h: 600 });
   const [view, setView] = useState<View>({ x: 0, y: 0, w: 100, h: 100 });
+  /**
+   * The live camera — **not** a mirror of `view`, and never written during
+   * render.
+   *
+   * A pan is DOM-only: `paintCamera` moves the matrix and this ref, and React
+   * hears about it once, on pointer-up. Assigning `viewRef.current = view` in
+   * the render body used to undo that. Any re-render landing mid-gesture — the
+   * 5s map clock, an SSE snapshot, a parent tick — rewound the ref to the last
+   * *committed* view, and the `commitView(viewRef.current)` on pointer-up then
+   * saved the rewind: the map snapped back to where the drag started. So the
+   * ref leads and `view` follows, never the other way round.
+   */
   const viewRef = useRef(view);
-  viewRef.current = view;
   const sizeRef = useRef(size);
-  sizeRef.current = size;
   const detailRef = useRef<Detail>("none");
   const rafReactRef = useRef<number | null>(null);
   const ptsRef = useRef<Pt[]>([]);
@@ -709,11 +1117,30 @@ function MapCanvasImpl({
   // computed from it would frame the map against the wrong aspect.
   const [measured, setMeasured] = useState(false);
 
+  /**
+   * The board has been framed at least once against a real container.
+   *
+   * Before that, `view` is the initial 100×100 window over a placeholder
+   * 900×600 box, so the first paint is a wild zoom onto whatever two nodes
+   * happen to sit near the origin — which is exactly the half-second of
+   * squashed nonsense you saw on load. Nothing is shown until the first fit
+   * has landed.
+   */
+  const [framed, setFramed] = useState(false);
+
+  /**
+   * A canvas can mount inside a hidden tab — the war room puts the board
+   * behind one on a phone — where it has no box at all and nothing to frame
+   * against. ResizeObserver reports it the moment it is revealed and gains
+   * one, which is when the first fit runs and the board is shown.
+   */
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const apply = (w: number, h: number) => {
       if (w < 2 || h < 2) return;
+      // Ref first: the gesture handlers read it and must not wait for a commit.
+      sizeRef.current = { w, h };
       setSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
       setMeasured(true);
     };
@@ -727,6 +1154,15 @@ function MapCanvasImpl({
     return () => ro.disconnect();
   }, []);
 
+  /**
+   * The region React last rendered, or null while the whole board is drawn.
+   * A ref because `paintCamera` runs on every gesture frame and must not be
+   * rebuilt (or go stale) between commits.
+   */
+  const bandRef = useRef<View | null>(null);
+  /** Set from the effect below — `commitView` is defined further down. */
+  const commitViewRef = useRef<(v: View) => void>(() => {});
+
   /** CSS transform on the world group — better GPU path than SVG transform attr. */
   const paintCamera = useCallback((v: View) => {
     viewRef.current = v;
@@ -734,6 +1170,23 @@ function MapCanvasImpl({
     if (!g) return;
     const { w: sw, h: sh } = sizeRef.current;
     g.style.transform = cameraCssMatrix(v, sw, sh);
+
+    // Panned or pinched past what is mounted — pull the next ring in now,
+    // while it is still outside the screen, rather than after a gap shows.
+    //
+    // Synchronously, not via rAF. This runs inside the pointer/wheel handler,
+    // so React renders before the browser paints this frame; deferring it by
+    // one rAF was enough for a hard zoom-out (view growing 1.18× per frame) to
+    // outrun the mounted ring and blink a couple of nodes at the edge. No
+    // throttle needed: the first commit re-centres the band, so any further
+    // call in the same frame no longer breaches it.
+    const band = bandRef.current;
+    if (band && !bandHolds(band, v)) {
+      // Keep the ref in step immediately — the effect that normally maintains
+      // it runs after commit, and a second breach test can happen before then.
+      bandRef.current = bandFor(v);
+      commitViewRef.current(v);
+    }
   }, []);
 
   /**
@@ -760,6 +1213,10 @@ function MapCanvasImpl({
     }
     setView(v);
   }, []);
+
+  useEffect(() => {
+    commitViewRef.current = commitView;
+  }, [commitView]);
 
   /**
    * Zoom/pinch: matrix only. React (cull + LOD) waits for the gesture to end —
@@ -818,7 +1275,10 @@ function MapCanvasImpl({
     if (lastFit.current === fitKey) return;
     lastFit.current = fitKey;
     fit();
-  }, [fitKey, fit]);
+    // Only a fit against a measured container counts as framed; the first one
+    // runs on the placeholder size and is the frame we are hiding.
+    if (measured) setFramed(true);
+  }, [fitKey, fit, measured]);
 
   /**
    * Chat chips (and any other external "look at this node") pan here. Keep the
@@ -893,10 +1353,13 @@ function MapCanvasImpl({
   }, [scheduleZoomView, setCameraBusy, commitView]);
 
   // Keep camera CSS transform in sync after React commits (size / view change).
+  // Painted from the *ref*, not from `view`: this effect can also fire in the
+  // middle of a drag, and the committed view is a stale camera by then.
   useEffect(() => {
     const g = cameraRef.current;
     if (!g) return;
-    g.style.transform = cameraCssMatrix(view, size.w, size.h);
+    const { w: sw, h: sh } = sizeRef.current;
+    g.style.transform = cameraCssMatrix(viewRef.current, sw, sh);
     g.style.transformOrigin = "0px 0px";
   }, [view, size.w, size.h]);
 
@@ -1083,6 +1546,35 @@ function MapCanvasImpl({
     });
   }
 
+  /**
+   * Stable across renders on purpose: `MapNode` / `EdgesLayer` are memoised,
+   * and a fresh closure here would invalidate all 231 marks on every commit —
+   * exactly the rebuild the memo exists to avoid. The gesture state it reads
+   * lives in refs, so nothing has to be captured.
+   */
+  const onNodeTap = useCallback(
+    (id: number) => {
+      if (suppressClick.current) {
+        suppressClick.current = false;
+        return;
+      }
+      if (moved.current) return;
+      onSelectNode(id);
+    },
+    [onSelectNode],
+  );
+
+  const onEdgeTap = useMemo(
+    () =>
+      onEdgeClick
+        ? (edge: EdgeRow) => {
+            if (moved.current) return;
+            onEdgeClick(edge);
+          }
+        : null,
+    [onEdgeClick],
+  );
+
   function pickNodeAtClient(clientX: number, clientY: number) {
     // Touch capture steals the synthetic click target; hit-test nodes ourselves.
     if (suppressClick.current) {
@@ -1164,20 +1656,55 @@ function MapCanvasImpl({
   /** Zoomed out past the point where discs can fit: paint ground, not marks. */
   const far = territory && k >= TERRITORY_FROM;
 
-  // Full board always — viewport culling left empty strips when zooming out
-  // before React re-committed the camera (phone pan/zoom). Flicker is handled
-  // by the CSS camera matrix instead.
+  /**
+   * What to draw: the viewport plus a margin, or the whole board.
+   *
+   * Whole board in the territory view — there the board *is* the viewport, so
+   * culling saves nothing, and each held node stains the ground for 64 units
+   * around it, so a node well off-screen still colours what you can see.
+   *
+   * Everywhere else this is the difference the phone feels. Zoomed in far
+   * enough to read the glyphs, around 30 of the 231 marks are on screen; the
+   * other 200 were being built, laid out and re-laid-out on every commit for
+   * nobody. That is also why clearing the "!" flags was so noticeable: each
+   * flagged node added a group, a circle and an SVG `<text>`, and text is the
+   * most expensive thing on this canvas — 231 of them, nearly all off-screen.
+   */
+  const band = useMemo(() => (far ? null : bandFor(view)), [far, view]);
+
+  // After commit, not during render: the ref means "this is what is mounted",
+  // and a render React throws away must not be able to claim otherwise.
+  useEffect(() => {
+    bandRef.current = band;
+  }, [band]);
+
+  const shown = useMemo(() => {
+    if (!band) return pts;
+    const pad = CULL_PAD_PX * k;
+    const x0 = band.x - pad;
+    const x1 = band.x + band.w + pad;
+    const y0 = band.y - pad;
+    const y1 = band.y + band.h + pad;
+    return pts.filter(
+      (p) => p.px >= x0 && p.px <= x1 && p.py >= y0 && p.py <= y1,
+    );
+  }, [pts, band, k]);
+
+  // Only for what is actually drawn — `styleFor` runs per node and the
+  // territory view, the one case that needs every node, never culls.
   const styles = useMemo(() => {
     const m = new Map<number, NodeStyle>();
-    for (const { node } of pts) m.set(node.id, styleFor(node));
+    for (const { node } of shown) m.set(node.id, styleFor(node));
     return m;
-  }, [pts, styleFor]);
+  }, [shown, styleFor]);
 
   // Held nodes bucketed by colour — one province per kingdom, not per node.
+  // Only the territory view draws these, so building them at any other zoom
+  // is a pass over the whole board for something nobody renders.
   const zoneGroups = useMemo<[string, Pt[]][]>(() => {
-    if (!territory) return [];
+    if (!far) return [];
     const m = new Map<string, Pt[]>();
-    for (const p of pts) {
+    for (const p of shown) {
       const zone = styles.get(p.node.id)?.zone;
       if (!zone) continue;
       const bucket = m.get(zone);
@@ -1185,7 +1712,7 @@ function MapCanvasImpl({
       else m.set(zone, [p]);
     }
     return [...m];
-  }, [pts, styles, territory]);
+  }, [shown, styles, far]);
 
   /**
    * Shield countdowns, resolved here rather than in the node loop so they can
@@ -1196,14 +1723,14 @@ function MapCanvasImpl({
   const shieldLabels = useMemo(() => {
     if (far || mode === "buff" || !labelFor || k >= SHIELD_UNTIL) return [];
     const out: { id: number; px: number; py: number; text: string }[] = [];
-    for (const { node, px, py } of pts) {
+    for (const { node, px, py } of shown) {
       const text = labelFor(node);
       if (!text) continue;
       const r = MARK_PX[node.kind] * boost * k;
       out.push({ id: node.id, px, py: py + r + 29 * k, text });
     }
     return out;
-  }, [pts, labelFor, far, mode, k, boost]);
+  }, [shown, labelFor, far, mode, k, boost]);
 
   return (
     <div
@@ -1223,7 +1750,12 @@ function MapCanvasImpl({
       <svg
         ref={svgRef}
         className="absolute inset-0 h-full w-full select-none"
-        style={{ touchAction: "none" }}
+        style={{
+          touchAction: "none",
+          // Hidden, not unmounted: the ResizeObserver measures this very
+          // wrapper, so the board has to be laid out to know how to frame it.
+          opacity: framed ? 1 : 0,
+        }}
         viewBox={screenViewBoxAttr(size.w, size.h)}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -1248,256 +1780,35 @@ function MapCanvasImpl({
         >
         {far && <TerritoryLayer groups={zoneGroups} />}
 
-        <g>
-          {edges.map((edge) => {
-            const a = byId.get(edge.aId);
-            const b = byId.get(edge.bId);
-            if (!a || !b) return null;
-            const touches =
-              selectedId === edge.aId || selectedId === edge.bId;
-            // Stroke in world units (× k ≈ screen px). Avoid non-scaling-stroke
-            // under a live CSS transform — it forces extra work on Android GPUs.
-            const sw = (touches ? 4.8 : 3) * k;
-            return (
-              <g key={`${edge.aId}-${edge.bId}`}>
-                <line
-                  x1={a.px}
-                  y1={a.py}
-                  x2={b.px}
-                  y2={b.py}
-                  stroke={touches ? "#38bdf8" : "#3f4d69"}
-                  strokeWidth={sw}
-                  strokeLinecap="round"
-                />
-                {onEdgeClick && (
-                  <line
-                    x1={a.px}
-                    y1={a.py}
-                    x2={b.px}
-                    y2={b.py}
-                    stroke="transparent"
-                    strokeWidth={14 * k}
-                    strokeLinecap="round"
-                    style={{ cursor: "pointer" }}
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      if (moved.current) return;
-                      onEdgeClick(edge);
-                    }}
-                  />
-                )}
-              </g>
-            );
-          })}
-        </g>
+        <EdgesLayer
+          edges={edges}
+          byId={byId}
+          k={k}
+          selectedId={selectedId}
+          onEdgeTap={onEdgeTap}
+          band={band}
+        />
 
         {/* Expansion plan: base path + light wave toward tips, under marks. */}
         <PlanEdgesLayer segs={planEdges} byId={byId} k={k} />
 
         <g>
-          {pts.map(({ node, px, py }) => {
-            const s = styles.get(node.id) ?? { fill: "#64748b" };
-            const isSel = selectedId === node.id;
-            const buff = mode === "buff" ? dominantBuff(node) : null;
-            // In buff mode a node that grants nothing shrinks out of the way:
-            // the whole point of the view is spotting what is worth taking.
-            const r =
-              MARK_PX[node.kind] *
-              boost *
-              k *
-              (mode === "buff" && !buff ? 0.45 : 1);
-            const glyphId =
-              mode === "buff"
-                ? buff
-                  ? BUFF_GLYPH_ID[buff.field]
-                  : null
-                : KIND_GLYPH_ID[node.kind];
-            const gSize = r * (far ? FAR_GLYPH_RATIO : GLYPH_RATIO);
-
-            return (
-              <g
-                key={node.id}
-                transform={`translate(${px} ${py})`}
-                style={{ cursor: "pointer" }}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  if (suppressClick.current) {
-                    suppressClick.current = false;
-                    return;
-                  }
-                  if (moved.current) return;
-                  onSelectNode(node.id);
-                }}
-              >
-                {/* A dome up close, a thin collar far out: at territory zoom
-                    the full-size domes are wider than the gaps between nodes
-                    and drown the very colour the view exists to show. */}
-                {s.shield &&
-                  (far ? (
-                    <circle
-                      r={gSize * 0.72}
-                      fill="none"
-                      stroke="#7dd3fc"
-                      strokeOpacity={0.75}
-                      strokeWidth={1.4 * k}
-                    />
-                  ) : (
-                    <circle
-                      r={r * 2.3}
-                      fill="#38bdf8"
-                      fillOpacity={0.16}
-                      stroke="#7dd3fc"
-                      strokeWidth={1.2 * k}
-                    />
-                  ))}
-                {isSel && (
-                  <circle
-                    r={r * 2.7}
-                    fill="none"
-                    stroke="#38bdf8"
-                    strokeWidth={1.8 * k}
-                    strokeDasharray={`${3 * k} ${2.5 * k}`}
-                  />
-                )}
-                {/* Outline (e.g. link-editor neighbours) must survive far zoom
-                    when discs are off. */}
-                {far && s.outline && (
-                  <circle
-                    r={gSize * 0.9}
-                    fill="none"
-                    stroke={s.outline}
-                    strokeWidth={1.8 * k}
-                    strokeOpacity={0.95}
-                  />
-                )}
-                {/* Far out the ground is already the kingdom's colour, so the
-                    disc and its ring would only repeat it — at the density
-                    where they overlap into a pile. The glyph alone, half
-                    faded, still says what the object is. */}
-                {!far && s.ring && (
-                  <circle
-                    r={r * 1.55}
-                    fill="none"
-                    stroke={s.ring}
-                    strokeWidth={2 * k}
-                  />
-                )}
-                {!far && (
-                  // Disc carries the colour, glyph carries the meaning.
-                  // Plan: soft white overlay that breathes — kingdom fill stays
-                  // underneath so ownership is still readable.
-                  <>
-                    <circle
-                      r={r}
-                      fill={s.fill}
-                      stroke={s.outline ?? "#0b0f17"}
-                      strokeWidth={1.6 * k}
-                    />
-                    {s.plan && (
-                      <circle
-                        r={r}
-                        fill="#e8edf5"
-                        className="wz-plan-fill"
-                        style={{ pointerEvents: "none" }}
-                      />
-                    )}
-                  </>
-                )}
-                {glyphId && (
-                  <use
-                    href={glyphId}
-                    x={-gSize / 2}
-                    y={-gSize / 2}
-                    width={gSize}
-                    height={gSize}
-                    style={{
-                      color: far ? FAR_GLYPH_INK : GLYPH_INK,
-                      opacity: far ? farGlyphOpacity(k) : 1,
-                      pointerEvents: "none",
-                    }}
-                  />
-                )}
-                {s.plan && (
-                  <PlanMark size={r * (far ? PLAN_SPAN_FAR : PLAN_SPAN)} />
-                )}
-                {s.battle && (
-                  <BattleMark size={r * (far ? BATTLE_SPAN_FAR : BATTLE_SPAN)} />
-                )}
-                {s.note && (
-                  <NoteCloud
-                    size={r * (far ? 1.8 : 2.2)}
-                    count={s.noteCount ?? 1}
-                    k={k}
-                    markR={r}
-                  />
-                )}
-                {!far && s.flag && (
-                  <g transform={`translate(${r * 1.5} ${-r * 1.6})`}>
-                    <circle
-                      r={5.5 * k}
-                      fill="#eab308"
-                      stroke="#0b0f17"
-                      strokeWidth={k}
-                    />
-                    <text
-                      y={2 * k}
-                      textAnchor="middle"
-                      fontSize={8 * k}
-                      fontWeight="700"
-                      fill="#0b0f17"
-                      style={{ pointerEvents: "none" }}
-                    >
-                      !
-                    </text>
-                  </g>
-                )}
-                {/* Finger-sized hit area for mouse; touch uses pickNodeAtClient. */}
-                <circle r={Math.max(r * 1.6, 22 * k)} fill="transparent" />
-
-                {/* Far out the board is territory, not a list of objects:
-                    no text at all, the colour under the glyph says it. */}
-                {!far &&
-                  (mode === "buff"
-                    ? buff &&
-                      detail !== "none" && (
-                        // The percent *is* the label here, and it is short
-                        // enough to survive as far out as a level does.
-                        <text
-                          y={r + 15 * k}
-                          textAnchor="middle"
-                          fontSize={14 * k}
-                          fontWeight="700"
-                          fill={BUFF_COLOR[buff.field]}
-                          style={{ pointerEvents: "none" }}
-                        >
-                          {buff.value}%
-                        </text>
-                      )
-                    : detail !== "none" && (
-                        <text
-                          y={r + 15 * k}
-                          textAnchor="middle"
-                          fontSize={13 * k}
-                          fill={isSel ? "#e6ebf5" : "#94a3b8"}
-                          style={{ pointerEvents: "none" }}
-                        >
-                          {detail === "full" ? (
-                            <>
-                              {node.name}
-                              <tspan fill="#64748b"> {node.level}</tspan>
-                            </>
-                          ) : (
-                            // Zoomed out the name is unreadable anyway; the
-                            // level is what you scan the map for.
-                            <tspan fontWeight="700" fill="#8fa3bf">
-                              {node.level}
-                            </tspan>
-                          )}
-                        </text>
-                      ))}
-              </g>
-            );
-          })}
+          {shown.map(({ node, px, py }) => (
+            <MapNode
+              key={node.id}
+              node={node}
+              px={px}
+              py={py}
+              s={styles.get(node.id) ?? FALLBACK_STYLE}
+              isSel={selectedId === node.id}
+              mode={mode}
+              far={far}
+              k={k}
+              boost={boost}
+              detail={detail}
+              onTap={onNodeTap}
+            />
+          ))}
         </g>
 
         {/*
@@ -1553,7 +1864,20 @@ function MapCanvasImpl({
         </div>
       )}
 
-      {nodes.length === 0 && empty && (
+      {!framed && (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3">
+          <span
+            className="wz-spinner block size-9"
+            style={{ ["--wz-spinner-w" as string]: "3.5px" }}
+            aria-hidden
+          />
+          <span className="text-xs text-[var(--color-text-soft)]">
+            {t("map.loading")}
+          </span>
+        </div>
+      )}
+
+      {framed && nodes.length === 0 && empty && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           {empty}
         </div>

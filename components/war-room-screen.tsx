@@ -13,7 +13,11 @@ import type { EdgeRow, NodeRow } from "@/db/schema";
 import type { ChatMessage } from "@/lib/live-events";
 import type { PlanSnapshot } from "@/lib/plan-types";
 import { planEdgesFromPaths, computePlanStats } from "@/lib/plan-stats";
-import { hasShield } from "@/lib/staleness";
+import {
+  formatDurationShort,
+  hasShield,
+  shieldSecondsLeft,
+} from "@/lib/staleness";
 import { useT } from "./i18n-provider";
 import { useKingdoms } from "./kingdoms-provider";
 import { MapCanvas, type NodeStyle, type PlanEdgeSeg } from "./map-canvas";
@@ -139,6 +143,19 @@ export function WarRoomScreen({
     [colorOf, selected, mapNow, planCaptureIds, noteCountById],
   );
 
+  /**
+   * Same countdown the main map draws, and for a sharper reason here: when a
+   * shielded gate is what the route is bending around, "how long until it
+   * opens" is the number that decides whether to plan the detour at all.
+   */
+  const labelFor = useCallback(
+    (node: NodeRow) => {
+      const left = shieldSecondsLeft(node.shieldUntil, mapNow);
+      return left > 0 ? formatDurationShort(left) : null;
+    },
+    [mapNow],
+  );
+
   const routeTo = useCallback(
     (id: number) => {
       if (routing) return;
@@ -172,7 +189,9 @@ export function WarRoomScreen({
           if (res.ok && res.plan) {
             setPlan(res.plan);
           } else if (res.error && res.error !== "plan.alreadyOurs") {
-            setPlanError(t(res.error));
+            // params carries the blocking gate's name — drop it and the
+            // message degrades to "{name}" on screen.
+            setPlanError(t(res.error, res.params));
           }
         })();
       });
@@ -230,6 +249,7 @@ export function WarRoomScreen({
           onSelectNode={onSelectNode}
           onLongPressNode={onLongPressNode}
           styleFor={styleFor}
+          labelFor={labelFor}
           territory
           fitToken={fitToken}
           focusId={selected}

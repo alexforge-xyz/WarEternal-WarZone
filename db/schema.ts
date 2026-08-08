@@ -287,6 +287,26 @@ export const planSettings = sqliteTable("plan_settings", {
     () => kingdoms.id,
     { onDelete: "set null" },
   ),
+  /**
+   * Route straight through shielded enemy gates instead of around them.
+   *
+   * Off is the truthful answer to "what can we take": a shielded gate is a
+   * wall. On is for the other half of the job — sketching the push for after
+   * the timers drop, when routing round a shield that will be gone by then
+   * only draws a detour nobody intends to walk. Shared, not per-officer:
+   * everyone is looking at one plan and has to know which question it answers.
+   */
+  /*
+   * `sql\`0\`` and not `false`: drizzle-kit's SQLite push does not read a
+   * boolean literal as a column default, so it treated this as "NOT NULL with
+   * no default", decided the existing settings row would lose data, and
+   * stopped to ask. `deploy/update.sh` has no TTY to answer with, so the whole
+   * deploy would have died on the schema step. Verified by pushing against a
+   * copy of the live database.
+   */
+  bypassShields: integer("bypass_shields", { mode: "boolean" })
+    .notNull()
+    .default(sql`0`),
 });
 
 /**

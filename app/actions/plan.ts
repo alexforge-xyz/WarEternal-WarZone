@@ -14,7 +14,7 @@ import {
 } from "@/db/schema";
 import { getRole, getUser } from "@/lib/auth";
 import { notifyPlanChanged } from "@/lib/live-server";
-import { shortestCapturePath } from "@/lib/plan-path";
+import { blockingSealedGate, shortestCapturePath } from "@/lib/plan-path";
 import { canEdit, canPlan } from "@/lib/roles";
 import { nowSeconds } from "@/lib/staleness";
 import type { ActionState } from "./nodes";
@@ -33,17 +33,28 @@ async function requireOfficer(): Promise<
   return { ok: true, userId: me.id };
 }
 
-async function loadPlanningKingdomId(): Promise<number | null> {
+async function loadPlanSettings(): Promise<{
+  planningKingdomId: number | null;
+  bypassShields: boolean;
+}> {
   const [row] = await db
     .select()
     .from(planSettings)
     .where(eq(planSettings.id, 1))
     .limit(1);
-  if (row?.planningKingdomId != null) return row.planningKingdomId;
+  if (row?.planningKingdomId != null) {
+    return {
+      planningKingdomId: row.planningKingdomId,
+      bypassShields: row.bypassShields,
+    };
+  }
   // Mirror getPlanSettings bootstrap
   const { getPlanSettings } = await import("@/db/queries");
   const s = await getPlanSettings();
-  return s.planningKingdomId;
+  return {
+    planningKingdomId: s.planningKingdomId,
+    bypassShields: s.bypassShields,
+  };
 }
 
 /**
@@ -66,7 +77,7 @@ export async function addPlanPath(
     return { ok: false, error: "plan.badTarget" };
   }
 
-  const planningKingdomId = await loadPlanningKingdomId();
+  const { planningKingdomId, bypassShields } = await loadPlanSettings();
   if (planningKingdomId == null) {
     return { ok: false, error: "plan.noKingdom" };
   }
@@ -99,13 +110,32 @@ export async function addPlanPath(
   }
 
   const edgeRows = await db.select().from(edges);
+  const now = nowSeconds();
   const chain = shortestCapturePath(
     targetNodeId,
     planningKingdomId,
     nodeRows,
     edgeRows,
+    { now, ignoreGateShields: bypassShields },
   );
   if (!chain || chain.length < 2) {
+    // Tell them *which* gate, not just "no road": the difference between
+    // "wait for a timer" and "look for another way in" is the whole answer.
+    const blocker = blockingSealedGate(
+      targetNodeId,
+      planningKingdomId,
+      nodeRows,
+      edgeRows,
+      { now },
+    );
+    if (blocker) {
+      const gate = nodeRows.find((n) => n.id === blocker.id);
+      return {
+        ok: false,
+        error: "plan.gateShielded",
+        params: { name: gate?.name ?? String(blocker.id) },
+      };
+    }
     return { ok: false, error: "plan.unreachable" };
   }
 
@@ -214,7 +244,7 @@ export async function removeNodeFromPlan(
   if (!gate.ok) return gate.state;
   if (!Number.isInteger(nodeId)) return { ok: false, error: "plan.badTarget" };
 
-  const planningKingdomId = await loadPlanningKingdomId();
+  const { planningKingdomId, bypassShields } = await loadPlanSettings();
   if (planningKingdomId == null) {
     return { ok: false, error: "plan.noKingdom" };
   }
@@ -267,6 +297,9 @@ export async function removeNodeFromPlan(
     const nodeRows = await db.select().from(nodes);
     const edgeRows = await db.select().from(edges);
     const avoid = new Set<number>([nodeId]);
+    // Same rule as a fresh trail: a re-route must not sneak a tip back onto
+    // the plan through a gate the router just refused to cross.
+    const now = nowSeconds();
     const snap = await getPlanSnapshot();
     const onPlan = new Set(snap.paths.flatMap((p) => p.nodes));
     const existingChains = new Set(snap.paths.map((p) => p.nodes.join(",")));
@@ -282,7 +315,7 @@ export async function removeNodeFromPlan(
         planningKingdomId,
         nodeRows,
         edgeRows,
-        { avoid },
+        { avoid, now, ignoreGateShields: bypassShields },
       );
       if (!chain || chain.length < 2) continue;
       const key = chain.join(",");
@@ -355,6 +388,37 @@ export async function deletePlanNote(noteId: number): Promise<PlanActionState> {
   if (!Number.isInteger(noteId)) return { ok: false, error: "plan.badTarget" };
 
   await db.delete(planNotes).where(eq(planNotes.id, noteId));
+  try {
+    notifyPlanChanged();
+  } catch {
+    /* bus */
+  }
+  return { ok: true, plan: await getPlanSnapshot() };
+}
+
+/**
+ * Toggle "route through shielded gates".
+ *
+ * Officer-level, unlike the planning kingdom: this is a question about the
+ * plan being drawn right now ("what can we take today" vs "what does the push
+ * look like once the timers drop"), and the people drawing it are officers.
+ *
+ * Existing trails are left alone. Re-routing the whole board under someone's
+ * hands because a switch flipped would be worse than the stale line it fixed —
+ * a trail is a decision somebody made, and it comes off the same way it went
+ * on: by tapping its tip.
+ */
+export async function setBypassShields(on: boolean): Promise<PlanActionState> {
+  const gate = await requireOfficer();
+  if (!gate.ok) return gate.state;
+
+  // Touch getPlanSettings first so row 1 exists (fresh install, no admin visit).
+  await loadPlanSettings();
+  await db
+    .update(planSettings)
+    .set({ bypassShields: on })
+    .where(eq(planSettings.id, 1));
+
   try {
     notifyPlanChanged();
   } catch {

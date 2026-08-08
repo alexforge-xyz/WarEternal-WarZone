@@ -48,7 +48,10 @@ export function NavLinks() {
   );
 
   return (
-    <nav className="flex items-center gap-0.5">
+    // The one part of the header allowed to give: `min-w-0` lets it shrink
+    // instead of pushing the session badge off the screen, and the overflow
+    // turns the leftover into a swipe rather than a pile-up.
+    <nav className="wz-noscrollbar flex min-w-0 items-center gap-0.5 overflow-x-auto">
       {visible.map(({ href, key, icon: Icon }) => {
         // Map is `/`; treat legacy `/map` as the same tab.
         const active =
@@ -59,7 +62,7 @@ export function NavLinks() {
           <Link
             key={href}
             href={href}
-            className={`flex min-h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm transition-colors sm:px-3 ${
+            className={`flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm transition-colors sm:px-3 ${
               active
                 ? "bg-[var(--color-panel-2)] text-[var(--color-text)]"
                 : "text-[var(--color-text-soft)] hover:text-[var(--color-text)]"

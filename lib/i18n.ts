@@ -92,6 +92,13 @@ const ru = {
   "stats.nodes": "Узлов",
   "stats.totalPerHour": "{c}/ч всего",
   "stats.unlinked": "Без связей",
+  "seed.title": "Отпечаток карты",
+  "seed.hint":
+    "Скачать текущие узлы и дороги как файл `db/seed-data.ts` — то, что правилось в живой базе, обратно в код. Владение, щиты и «проверено» не выгружаются: это живые данные.",
+  "seed.download": "Скачать seed-data.ts",
+  "seed.working": "Готовлю…",
+  "seed.done": "Готово: узлов {nodes}, дорог {edges}. Положить в db/seed-data.ts.",
+  "seed.failed": "Не получилось выгрузить.",
   "stats.unknownYield": "Выработка ?",
 
   "map.fit": "Вписать",
@@ -114,6 +121,7 @@ const ru = {
   "map.removeRoad": "Убрать дорогу",
   "map.roadDeleteHint": "Клик — удалить дорогу",
   "map.addNodesFirst": "Сначала добавь узлы на вкладке «Узлы».",
+  "map.loading": "Загрузка",
   "map.ownHint":
     "Тык по узлу — выбрать владельца, поставить щит или подтвердить, что всё по-прежнему.",
   "map.onlyStale": "Только на проверку",
@@ -139,28 +147,32 @@ const ru = {
   "chat.blank": "Пустое сообщение.",
   "chat.tooFast": "Слишком часто. Подожди немного.",
   "chat.failed": "Не отправилось.",
-  "warroom.mapHint": "Короткий тык — тропа; долгий — меню. ПКМ тоже меню.",
+  "warroom.mapHint":
+    "Тык по узлу — проложить тропу. Долгий тап (или ПКМ) — меню узла.",
   "warroom.help": "Помощь",
   "warroom.help.title": "Как работает штаб",
   "warroom.help.intro":
-    "Карта в штабе только для плана и обсуждения. Владение пишется на главной карте — здесь один общий план для всех офицеров.",
-  "warroom.help.tapTitle": "Короткий тык",
+    "Штаб — место, где офицеры договариваются, что берём дальше. Карта здесь ничего не меняет в игре и не записывает владельцев: она рисует общий план захвата, один на всех — что видишь ты, то видят остальные, сразу.",
+  "warroom.help.tapTitle": "Короткий тык — проложить тропу",
   "warroom.help.tapBody":
-    "По чужому узлу — кратчайшая тропа от наших + пин для чата. Повторный тык по кончику тропы снимает её. Свой узел — только пин.",
-  "warroom.help.holdTitle": "Долгий тап (ПКМ на ПК)",
+    "Тропа — это цепочка узлов, которые надо взять по порядку, чтобы дойти до цели: захватывать можно только то, что граничит с уже нашим. Тыкни чужой узел — от ближайшего нашего проложится кратчайший путь по дорогам. Тык по последнему узлу тропы снимает её целиком. Тык по узлу в середине тропы или по нашему узлу ничего не меняет — просто выбирает его, чтобы приложить к сообщению в чате.",
+  "warroom.help.holdTitle": "Долгий тап — меню узла (на ПК правая кнопка)",
   "warroom.help.holdBody":
-    "Меню узла: добавить в план; убрать — срезает узел, а то что дальше остаётся, если до него есть путь в обход; чат и заметки.",
-  "warroom.help.trailsTitle": "Тропы и сводка",
+    "«Добавить в план» — то же, что короткий тык. «Удалить из плана» убирает узел из всех троп, а то, что шло после него, само перепрокладывается в обход, если туда ещё есть дорога; если дороги нет — хвост пропадает. «Поделиться в чате» прикладывает узел к сообщению. «Заметки» — текст для других офицеров; у такого узла на карте появляется облачко.",
+  "warroom.help.trailsTitle": "Тропы и полоска сверху",
   "warroom.help.trailsBody":
-    "Бело-серые линии — общий план. Полоска сверху: рога, кристаллы/ч, баффы. Общий узел на двух тропах считается один раз. Стереть план — ластик справа в полоске.",
+    "Бело-серые пунктирные линии и есть общий план; светлая волна бежит от наших земель к цели. Полоска над картой считает, что мы получим, когда возьмём всё запланированное: рога, аметист и сапфир в час, баффы, и справа — сколько узлов осталось взять. Узел, попавший сразу в две тропы, считается один раз. Ластик справа стирает весь план.",
+  "warroom.help.gatesTitle": "Врата под щитом",
+  "warroom.help.gatesBody":
+    "Через чужие врата со щитом тропа не идёт: пока щит стоит, врата не взять, а значит и дальше не пройти. Она ищет обход, а если обхода нет — назовёт, какие врата мешают. Сами врата целью поставить можно, щит на наших вратах не мешает. Рядом на карте у щита видно, сколько ему осталось. Переключатель «Щиты насквозь» в полоске сверху отключает это правило — тогда тропа идёт напрямую, как будто щитов нет: это для планов на потом.",
   "warroom.help.chatTitle": "Чат",
   "warroom.help.chatBody":
-    "Сообщения хранятся на сервере. Пин к узлу — чип в строке чата; по нему можно вернуться к узлу. «Набирает…» видно другим офицерам.",
-  "warroom.help.toolsTitle": "Вписать / 45°",
+    "Обычный чат для офицеров, история хранится на сервере. Если перед отправкой выбрать узел на карте, к сообщению прилипнет чип с его названием — по нему любой вернётся к этому узлу. Видно, когда кто-то печатает.",
+  "warroom.help.toolsTitle": "Кнопки «Вписать» и «45°»",
   "warroom.help.toolsBody":
-    "Вписать — вся карта в экран. 45° — если в игре сетка по диагонали.",
+    "«Вписать» — уместить всю карту в экран. «45°» — повернуть карту, если в игре сетка идёт по диагонали, а не прямо. Тащить карту — одним пальцем, зум — двумя (на ПК колесо).",
   "warroom.help.readonly":
-    "Захват в игре и запись владельца — на экране «Карта», не здесь.",
+    "Захватывают в игре, а владельца записывают на экране «Карта». Штаб только планирует — отсюда в игру ничего не уходит.",
   "warroom.help.gotIt": "Понятно",
   "plan.title": "Тропы",
   "plan.kingdom": "Планируем за",
@@ -180,9 +192,16 @@ const ru = {
   "plan.emptyShort": "тыкни цель",
   "plan.noKingdom": "Не выбрано королевство штаба.",
   "plan.unreachable": "Нет дороги от наших узлов до цели.",
+  "plan.gateShielded":
+    "Путь перекрыт: на вратах «{name}» щит. Пройти нельзя, пока не спадёт.",
   "plan.badTarget": "Неверный узел.",
   "plan.alreadyOurs": "Уже наш — тропа не нужна.",
   "plan.routing": "Тропа…",
+  "plan.bypass": "Щиты насквозь:",
+  "plan.bypassOn": "активно",
+  "plan.bypassOff": "неактивно",
+  "plan.bypassHint":
+    "Активно — тропа идёт прямо через запертые врата: планируем на потом, когда щиты спадут. Неактивно — врата под щитом обходим: тропа показывает то, что можно взять прямо сейчас. Уже проложенные тропы не меняются.",
   "plan.addToPlan": "Добавить в план",
   "plan.removeFromPlan": "Удалить из плана",
   "plan.shareChat": "Поделиться в чате",
@@ -260,6 +279,11 @@ const ru = {
   "own.title": "Владение",
   "own.free": "Ничей",
   "own.confirm": "Проверено, без изменений",
+  "own.confirmAll": "Всё проверено",
+  "own.confirmAllSure": "Точно? {n}",
+  "own.confirmAllHint":
+    "Снять флажок «на проверку» со всех узлов разом — для тех, где измениться физически ничего не могло. Узлы под щитом и так не помечены. Отменить нельзя.",
+  "own.confirmAllDone": "Проверено узлов: {n}",
   "own.checked": "Проверено {ago} назад",
   "own.never": "Ни разу не проверяли",
   "own.stale": "Не обновляли больше {h} ч — стоит проверить",
@@ -406,6 +430,13 @@ const en: Record<MessageKey, string> = {
   "stats.nodes": "Nodes",
   "stats.totalPerHour": "{c}/h total",
   "stats.unlinked": "Unlinked",
+  "seed.title": "Map fingerprint",
+  "seed.hint":
+    "Download the current nodes and roads as `db/seed-data.ts` — whatever was fixed in the live database, back into the code. Ownership, shields and check times are not exported: those are live data.",
+  "seed.download": "Download seed-data.ts",
+  "seed.working": "Preparing…",
+  "seed.done": "Done: {nodes} nodes, {edges} roads. Drop it in db/seed-data.ts.",
+  "seed.failed": "Export failed.",
   "stats.unknownYield": "Yield ?",
 
   "map.fit": "Fit",
@@ -428,6 +459,7 @@ const en: Record<MessageKey, string> = {
   "map.removeRoad": "Remove road",
   "map.roadDeleteHint": "Click to delete this road",
   "map.addNodesFirst": "Add nodes on the “Nodes” tab first.",
+  "map.loading": "Loading",
   "map.ownHint":
     "Tap a node to set its owner, raise a shield, or confirm nothing changed.",
   "map.onlyStale": "Needs a check",
@@ -453,28 +485,32 @@ const en: Record<MessageKey, string> = {
   "chat.blank": "Empty message.",
   "chat.tooFast": "Too fast. Give it a moment.",
   "chat.failed": "Could not send.",
-  "warroom.mapHint": "Short tap = trail; long-press = menu (right-click too).",
+  "warroom.mapHint":
+    "Tap a node to route a trail. Long-press (or right-click) for its menu.",
   "warroom.help": "Help",
   "warroom.help.title": "How the war room works",
   "warroom.help.intro":
-    "The board here is for planning and talk only. Ownership is written on the main map — this room is one shared plan for every officer.",
-  "warroom.help.tapTitle": "Short tap",
+    "The war room is where officers agree on what to take next. The board here changes nothing in the game and records no owners: it draws one shared capture plan — what you see, everyone else sees, immediately.",
+  "warroom.help.tapTitle": "Short tap — route a trail",
   "warroom.help.tapBody":
-    "Enemy node — shortest trail from ours + chat pin. Tap the trail tip again to remove it. Own node — pin only.",
-  "warroom.help.holdTitle": "Long-press (right-click on desktop)",
+    "A trail is the chain of nodes to take, in order, to reach a target: you can only capture what borders something already yours. Tap an enemy node and the shortest road route from our nearest node is drawn. Tapping the last node of a trail removes the whole trail. Tapping a node in the middle of one, or a node of ours, changes nothing — it just selects it so you can attach it to a chat message.",
+  "warroom.help.holdTitle": "Long-press — node menu (right-click on desktop)",
   "warroom.help.holdBody":
-    "Node menu: add to plan; remove drops that node — later nodes stay if a road still reaches them without it; chat and notes.",
-  "warroom.help.trailsTitle": "Trails and totals",
+    "“Add to plan” is the same as a short tap. “Remove from plan” drops the node from every trail, and whatever came after it re-routes around it on its own if a road still reaches it; if none does, that tail disappears. “Share in chat” attaches the node to a message. “Notes” are text for other officers — a node with notes gets a small cloud on the board.",
+  "warroom.help.trailsTitle": "Trails and the top strip",
   "warroom.help.trailsBody":
-    "White–grey lines are the shared plan. Top strip: horns, crystals/h, buffs. A node on two trails counts once. Clear plan — eraser on the strip.",
+    "The white–grey dashed lines are the shared plan; a pulse of light runs from our land toward each target. The strip above the board totals what we gain once everything planned is taken: horns, amethyst and sapphire per hour, buffs, and on the right how many nodes are left to take. A node that lands on two trails counts once. The eraser on the right wipes the whole plan.",
+  "warroom.help.gatesTitle": "Shielded gates",
+  "warroom.help.gatesBody":
+    "A trail will not cross an enemy gate under a shield: it cannot be taken while the shield holds, so nothing behind it can either. It looks for a way round, and if there is none it names the gate in the way. You can still make the gate itself the target, and a shield on our own gate blocks nothing. The board shows how long each shield has left. The “Through shields” switch on the top strip turns the rule off — trails then run straight through as if no shield existed, which is how you sketch a push for later.",
   "warroom.help.chatTitle": "Chat",
   "warroom.help.chatBody":
-    "Messages are stored on the server. Pin a node to attach a chip in the chat line; tap it to jump back. Others see “is typing…”.",
-  "warroom.help.toolsTitle": "Fit / 45°",
+    "An ordinary officers' chat; history is kept on the server. Select a node on the board before sending and the message carries a chip with its name — anyone can tap that to jump back to the node. You can see when someone is typing.",
+  "warroom.help.toolsTitle": "The “Fit” and “45°” buttons",
   "warroom.help.toolsBody":
-    "Fit frames the whole map. 45° if the in-game grid runs diagonally.",
+    "“Fit” frames the whole map on screen. “45°” rotates the board, for when the in-game grid runs diagonally rather than square. Drag with one finger, pinch with two (mouse wheel on desktop).",
   "warroom.help.readonly":
-    "In-game capture and ownership edits belong on the Map screen, not here.",
+    "Capturing happens in the game, and the owner is recorded on the Map screen. The war room only plans — nothing here is sent to the game.",
   "warroom.help.gotIt": "Got it",
   "plan.title": "Trails",
   "plan.kingdom": "Planning as",
@@ -494,9 +530,16 @@ const en: Record<MessageKey, string> = {
   "plan.emptyShort": "tap a target",
   "plan.noKingdom": "No war-room kingdom selected.",
   "plan.unreachable": "No road from our nodes to that target.",
+  "plan.gateShielded":
+    "Blocked: the “{name}” gate is shielded. No way through until it drops.",
   "plan.badTarget": "Invalid node.",
   "plan.alreadyOurs": "Already ours — no trail needed.",
   "plan.routing": "Routing…",
+  "plan.bypass": "Through shields:",
+  "plan.bypassOn": "on",
+  "plan.bypassOff": "off",
+  "plan.bypassHint":
+    "On — trails run straight through sealed gates: planning for later, once the shields drop. Off — shielded gates are routed around, so a trail shows what can be taken right now. Trails already on the board are left as they are.",
   "plan.addToPlan": "Add to plan",
   "plan.removeFromPlan": "Remove from plan",
   "plan.shareChat": "Share in chat",
@@ -574,6 +617,11 @@ const en: Record<MessageKey, string> = {
   "own.title": "Held by",
   "own.free": "Neutral",
   "own.confirm": "Checked, no change",
+  "own.confirmAll": "All checked",
+  "own.confirmAllSure": "Sure? {n}",
+  "own.confirmAllHint":
+    "Clear the re-check flag on every flagged node at once — for the ones that physically cannot have changed. Shielded nodes are not flagged anyway. Cannot be undone.",
+  "own.confirmAllDone": "Nodes confirmed: {n}",
   "own.checked": "Checked {ago} ago",
   "own.never": "Never checked",
   "own.stale": "Not confirmed for over {h}h — worth a check",
@@ -715,6 +763,13 @@ const ar: Record<MessageKey, string> = {
   "stats.nodes": "العقد",
   "stats.totalPerHour": "{c}/س الإجمالي",
   "stats.unlinked": "بدون طرق",
+  "seed.title": "بصمة الخريطة",
+  "seed.hint":
+    "تنزيل العقد والطرق الحالية كملف `db/seed-data.ts` — ما جرى تعديله في قاعدة البيانات الحية يعود إلى الكود. الملكية والدروع وأوقات التحقق لا تُصدَّر: تلك بيانات حية.",
+  "seed.download": "تنزيل seed-data.ts",
+  "seed.working": "جارٍ التحضير…",
+  "seed.done": "تم: {nodes} عقدة، {edges} طريق. ضعه في db/seed-data.ts.",
+  "seed.failed": "فشل التصدير.",
   "stats.unknownYield": "الإنتاج ؟",
 
   "map.fit": "ملاءمة",
@@ -737,6 +792,7 @@ const ar: Record<MessageKey, string> = {
   "map.removeRoad": "إزالة الطريق",
   "map.roadDeleteHint": "انقر لحذف هذا الطريق",
   "map.addNodesFirst": "أضف العقد أولًا من تبويب «العقد».",
+  "map.loading": "جارٍ التحميل",
   "map.ownHint":
     "انقر عقدة لتحديد مالكها أو رفع درع أو تأكيد أن شيئًا لم يتغيّر.",
   "map.onlyStale": "بحاجة لتحقق",
@@ -762,28 +818,32 @@ const ar: Record<MessageKey, string> = {
   "chat.blank": "رسالة فارغة.",
   "chat.tooFast": "بسرعة كبيرة. انتظر قليلاً.",
   "chat.failed": "تعذّر الإرسال.",
-  "warroom.mapHint": "ضغطة قصيرة = مسار؛ طويلة = قائمة (زر أيمن أيضاً).",
+  "warroom.mapHint":
+    "اضغط عقدة لرسم مسار. ضغطة مطوّلة (أو زر أيمن) لقائمة العقدة.",
   "warroom.help": "مساعدة",
   "warroom.help.title": "كيف تعمل غرفة العمليات",
   "warroom.help.intro":
-    "الخريطة هنا للتخطيط والنقاش فقط. المِلكية تُسجَّل على الخريطة الرئيسية — هذه غرفة بخطة مشتركة لكل الضباط.",
-  "warroom.help.tapTitle": "ضغطة قصيرة",
+    "غرفة العمليات هي حيث يتفق الضباط على ما نأخذه تاليًا. الخريطة هنا لا تغيّر شيئًا في اللعبة ولا تسجّل المُلّاك: إنها ترسم خطة استيلاء مشتركة واحدة — ما تراه يراه الجميع، في الحال.",
+  "warroom.help.tapTitle": "ضغطة قصيرة — رسم مسار",
   "warroom.help.tapBody":
-    "عقدة عدو — أقصر مسار من عقدنا + تثبيت للدردشة. اضغط طرف المسار ثانية لإزالته. عقدتنا — تثبيت فقط.",
-  "warroom.help.holdTitle": "ضغط مطوّل (زر أيمن على الحاسوب)",
+    "المسار هو سلسلة العقد التي يجب أخذها بالترتيب للوصول إلى الهدف: لا يمكنك الاستيلاء إلا على ما يجاور شيئًا تملكه. اضغط عقدة عدو فيُرسم أقصر طريق من أقرب عقدة لنا. الضغط على آخر عقدة في المسار يحذف المسار كله. الضغط على عقدة في وسطه، أو على عقدة لنا، لا يغيّر شيئًا — يختارها فقط لتُرفق برسالة في الدردشة.",
+  "warroom.help.holdTitle": "ضغط مطوّل — قائمة العقدة (زر أيمن على الحاسوب)",
   "warroom.help.holdBody":
-    "قائمة العقدة: إضافة للخطة؛ الإزالة تحذف العقدة وتُبقي ما بعدها إن وُجد طريق حولها؛ دردشة وملاحظات.",
-  "warroom.help.trailsTitle": "المسارات والإجمالي",
+    "«إضافة للخطة» مثل الضغطة القصيرة. «إزالة من الخطة» تحذف العقدة من كل المسارات، وما بعدها يُعاد توجيهه حولها تلقائيًا إن بقي طريق يصله؛ وإن لم يبقَ، يختفي ذلك الذيل. «مشاركة في الدردشة» ترفق العقدة برسالة. «الملاحظات» نص لبقية الضباط — وتظهر سحابة صغيرة فوق العقدة على الخريطة.",
+  "warroom.help.trailsTitle": "المسارات والشريط العلوي",
   "warroom.help.trailsBody":
-    "الخطوط البيضاء-الرمادية هي الخطة المشتركة. الشريط أعلاه: الأبواق، البلورات/س، البافات. العقدة على مسارين تُحسب مرة. مسح الخطة — الممحاة على الشريط.",
+    "الخطوط المتقطعة البيضاء-الرمادية هي الخطة المشتركة؛ وتجري نبضة ضوء من أرضنا نحو كل هدف. الشريط أعلى الخريطة يحسب ما سنكسبه متى أُخذ كل المخطط: الأبواق، والأمِثِست والياقوت في الساعة، والبافات، وعلى اليمين كم عقدة بقيت. العقدة الواقعة على مسارين تُحسب مرة واحدة. الممحاة على اليمين تمسح الخطة كلها.",
+  "warroom.help.gatesTitle": "بوابات تحت الدرع",
+  "warroom.help.gatesBody":
+    "لا يعبر المسار بوابة عدو عليها درع: لا يمكن أخذها ما دام الدرع قائمًا، ولا ما خلفها. يبحث عن طريق بديل، وإن لم يوجد ذكر اسم البوابة المعترِضة. يمكنك جعل البوابة نفسها هدفًا، والدرع على بوابتنا لا يمنع شيئًا. وتُظهر الخريطة كم بقي لكل درع. مفتاح «عبر الدروع» في الشريط العلوي يعطّل هذه القاعدة — فتمر المسارات مباشرة كأن لا درع، وهكذا تخطّط لهجوم لاحق.",
   "warroom.help.chatTitle": "الدردشة",
   "warroom.help.chatBody":
-    "الرسائل تُحفظ على الخادم. تثبيت العقدة يظهر شريحة في سطر الدردشة؛ اضغطها للعودة إلى العقدة. الآخرون يرون «يكتب…».",
-  "warroom.help.toolsTitle": "ملاءمة / 45°",
+    "دردشة ضباط عادية، والسجل محفوظ على الخادم. اختر عقدة على الخريطة قبل الإرسال فتحمل الرسالة شريحة باسمها — يضغطها أي أحد ليعود إلى تلك العقدة. ويظهر لك متى يكتب أحدهم.",
+  "warroom.help.toolsTitle": "زرّا «ملاءمة» و«45°»",
   "warroom.help.toolsBody":
-    "ملاءمة تُظهر الخريطة كلها. 45° إن كانت الشبكة في اللعبة مائلة.",
+    "«ملاءمة» تُظهر الخريطة كلها على الشاشة. «45°» تدير اللوحة، حين تكون شبكة اللعبة مائلة لا مستقيمة. اسحب بإصبع واحد، وقرّب بإصبعين (بعجلة الفأرة على الحاسوب).",
   "warroom.help.readonly":
-    "الاستيلاء وتسجيل المالك في شاشة «الخريطة»، وليس هنا.",
+    "الاستيلاء يجري في اللعبة، والمالك يُسجَّل في شاشة «الخريطة». غرفة العمليات تخطّط فقط — لا يُرسل من هنا شيء إلى اللعبة.",
   "warroom.help.gotIt": "حسناً",
   "plan.title": "المسارات",
   "plan.kingdom": "نخطّط باسم",
@@ -803,9 +863,16 @@ const ar: Record<MessageKey, string> = {
   "plan.emptyShort": "انقر هدفاً",
   "plan.noKingdom": "لم يُحدَّد مملكة غرفة العمليات.",
   "plan.unreachable": "لا طريق من عقدنا إلى الهدف.",
+  "plan.gateShielded":
+    "الطريق مسدود: بوابة «{name}» عليها درع. لا مرور حتى يسقط.",
   "plan.badTarget": "عقدة غير صالحة.",
   "plan.alreadyOurs": "لنا بالفعل — لا حاجة لمسار.",
   "plan.routing": "يُحسب المسار…",
+  "plan.bypass": "عبر الدروع:",
+  "plan.bypassOn": "مفعّل",
+  "plan.bypassOff": "معطّل",
+  "plan.bypassHint":
+    "مفعّل — يمر المسار مباشرة عبر البوابات المدرّعة: تخطيط لما بعد سقوط الدروع. معطّل — تُتجنّب البوابات المدرّعة، فيُظهر المسار ما يمكن أخذه الآن. المسارات الموجودة لا تتغير.",
   "plan.addToPlan": "إضافة إلى الخطة",
   "plan.removeFromPlan": "إزالة من الخطة",
   "plan.shareChat": "مشاركة في الدردشة",
@@ -883,6 +950,11 @@ const ar: Record<MessageKey, string> = {
   "own.title": "المالك",
   "own.free": "محايدة",
   "own.confirm": "تم التحقق، بلا تغيير",
+  "own.confirmAll": "تم التحقق من الكل",
+  "own.confirmAllSure": "متأكد؟ {n}",
+  "own.confirmAllHint":
+    "إزالة علامة «يحتاج تحققًا» عن كل العقد دفعة واحدة — لتلك التي لا يمكن أن تكون قد تغيّرت فعليًا. العقد المدرّعة غير معلّمة أصلًا. لا يمكن التراجع.",
+  "own.confirmAllDone": "عقد تم تأكيدها: {n}",
   "own.checked": "تم التحقق قبل {ago}",
   "own.never": "لم يتم التحقق أبدًا",
   "own.stale": "لم يتم التأكيد منذ أكثر من {h} ساعة — يستحسن التحقق",

@@ -1,6 +1,13 @@
 "use client";
 
-import { Crosshair, Hand, MessageSquare, Route, X } from "lucide-react";
+import {
+  Crosshair,
+  Hand,
+  MessageSquare,
+  Route,
+  ShieldHalf,
+  X,
+} from "lucide-react";
 import { useT } from "./i18n-provider";
 
 /**
@@ -58,6 +65,11 @@ export function WarRoomHelp({ onClose }: { onClose: () => void }) {
             icon={<Route size={16} />}
             title={t("warroom.help.trailsTitle")}
             body={t("warroom.help.trailsBody")}
+          />
+          <HelpRow
+            icon={<ShieldHalf size={16} />}
+            title={t("warroom.help.gatesTitle")}
+            body={t("warroom.help.gatesBody")}
           />
           <HelpRow
             icon={<MessageSquare size={16} />}

@@ -8,6 +8,7 @@ import { getKingdoms } from "@/db/queries";
 import { I18nProvider } from "@/components/i18n-provider";
 import { KingdomsProvider } from "@/components/kingdoms-provider";
 import { LangSwitcher } from "@/components/lang-switcher";
+import { Logo } from "@/components/logo";
 import { NavLinks } from "@/components/nav-links";
 import { RoleProvider } from "@/components/role-provider";
 import { SessionBadge } from "@/components/session-badge";
@@ -70,25 +71,53 @@ export default async function RootLayout({
           <RoleProvider role={role}>
             <KingdomsProvider kingdoms={kingdoms}>
               <header className="z-30 shrink-0 border-b bg-[var(--color-panel)]/95 backdrop-blur">
+                {/*
+                  Nothing here may overflow the phone: at 375px, admin sees six
+                  nav links plus the mark, the Ko-fi button, the language picker
+                  and the session badge, and the row was 14px wider than the
+                  screen — so the ends piled on top of each other. The two outer
+                  groups keep their size and the nav is the one thing allowed to
+                  shrink and scroll, because it is the only part where a swipe
+                  is a reasonable way to reach the rest.
+
+                  No `overflow-hidden` on this row, however tempting: the
+                  language menu hangs below the header, and clipping the row
+                  cut it off so it read as being *under* the map. Containment
+                  belongs on the nav, which is the only thing that overflows.
+                */}
                 <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-2 px-3 sm:gap-3 sm:px-4">
-                  <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                  <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                    {/*
+                      The mark stays on a phone even though the wordmark does
+                      not: it is the only thing in the header that says which
+                      app this is, and at 375px the words were already cut.
+                    */}
                     <Link
                       href="/"
-                      className="hidden shrink-0 items-baseline gap-1.5 sm:flex"
+                      className="flex shrink-0 items-center gap-2"
+                      aria-label={PROJECT_NAME}
                     >
-                      <span className="font-semibold tracking-tight">
-                        War Eternal
-                      </span>
-                      <span className="font-semibold tracking-tight text-[var(--color-accent)]">
-                        WarZone
+                      <Logo
+                        size={26}
+                        className="shrink-0 text-[var(--color-text-soft)]"
+                      />
+                      <span className="hidden items-baseline gap-1.5 sm:flex">
+                        <span className="font-semibold tracking-tight">
+                          War Eternal
+                        </span>
+                        <span className="font-semibold tracking-tight text-[var(--color-accent)]">
+                          WarZone
+                        </span>
                       </span>
                     </Link>
                     <SupportButton />
                   </div>
-                  <div className="ms-auto flex items-center gap-1.5 sm:gap-2">
+                  <div className="ms-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
                     <NavLinks />
-                    <LangSwitcher />
-                    <SessionBadge />
+                    <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+                      <LangSwitcher />
+                      <SessionBadge />
+                    </div>
                   </div>
                 </div>
               </header>

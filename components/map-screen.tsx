@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   Check,
+  CheckCheck,
   Crosshair,
   List,
   RotateCcw,
@@ -20,13 +21,14 @@ import {
 } from "lucide-react";
 import {
   clearShield,
+  confirmAllStale,
   confirmNode,
   setBattle,
   setOwner,
   setShield,
 } from "@/app/actions/ownership";
 import { BATTLE_COLOR, KIND_KEY, kingdomShort } from "@/lib/constants";
-import type { EdgeRow, NodeRow } from "@/db/schema";
+import type { EdgeRow, NodeKind, NodeRow } from "@/db/schema";
 import {
   STALE_AFTER_HOURS,
   formatAgo,
@@ -42,7 +44,7 @@ import { useKingdoms, type KingdomInfo } from "./kingdoms-provider";
 import { MapCanvas, type MapMode, type NodeStyle } from "./map-canvas";
 import { useRole } from "./role-provider";
 import { useClock } from "./use-clock";
-import { useLiveMap } from "./use-live-map";
+import { useLiveMap, type NodePatch } from "./use-live-map";
 
 const NAME_KEY = "warzone_officer";
 
@@ -63,10 +65,13 @@ export function MapScreen({
   const kingdoms = useKingdoms();
   // Live rows: other officers' writes arrive over SSE without a full reload.
   // Selection / pan / zoom stay in local state and are not remounted.
-  const { nodes, edges, refresh: refreshMap } = useLiveMap(
-    initialNodes,
-    initialEdges,
-  );
+  const {
+    nodes,
+    edges,
+    refresh: refreshMap,
+    patchNode,
+    patchNodes,
+  } = useLiveMap(initialNodes, initialEdges);
   // 1s for the side panel countdowns. The map uses a stepped clock so it
   // does not rebuild ~600 SVG nodes every second on a phone.
   const now = useClock(serverNow);
@@ -95,14 +100,21 @@ export function MapScreen({
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const selectedNode = selected !== null ? byId.get(selected) : undefined;
 
-  /** Run a map mutation, then pull a snapshot so this tab is not waiting on SSE. */
+  /**
+   * Run a map mutation, then pull a snapshot so this tab is not waiting on SSE.
+   *
+   * `async` inside the transition on purpose: the callback used to fire the
+   * work and return, which ended the transition immediately and made `pending`
+   * mean nothing — every button read as idle while the write was still in the
+   * air. Awaiting it keeps `pending` honest for the buttons that must not be
+   * double-submitted; the one-tap ownership buttons stay live regardless and
+   * lean on the optimistic patch instead.
+   */
   const runMapAction = useCallback(
     (fn: () => void | Promise<unknown>) => {
-      startTransition(() => {
-        void (async () => {
-          await fn();
-          await refreshMap();
-        })();
+      startTransition(async () => {
+        await fn();
+        await refreshMap();
       });
     },
     [refreshMap],
@@ -132,13 +144,44 @@ export function MapScreen({
     });
   }, [nodes, query, onlyStale, now]);
 
-  // Stale count for the filter chip — fine-grained is fine here (list, not SVG).
-  const staleCount = useMemo(() => {
-    let n = 0;
-    for (const node of nodes)
-      if (needsCheck(node.checkedAt, node.shieldUntil, now)) n += 1;
-    return n;
-  }, [nodes, now]);
+  // Stale ids for the filter chip and the bulk confirm — fine-grained is fine
+  // here (list, not SVG).
+  const staleIds = useMemo(
+    () =>
+      nodes
+        .filter((node) => needsCheck(node.checkedAt, node.shieldUntil, now))
+        .map((node) => node.id),
+    [nodes, now],
+  );
+  const staleCount = staleIds.length;
+
+  /**
+   * "All checked" asks twice.
+   *
+   * Every other button on this panel is one tap and undoable by tapping again;
+   * this one writes two hundred rows and there is no button that puts the
+   * flags back. A second tap is cheap next to re-walking the whole board.
+   */
+  const [confirmAllArmed, setConfirmAllArmed] = useState(false);
+  useEffect(() => {
+    if (!confirmAllArmed) return;
+    const id = setTimeout(() => setConfirmAllArmed(false), 4000);
+    return () => clearTimeout(id);
+  }, [confirmAllArmed]);
+  // Disarm as soon as there is nothing left to confirm.
+  useEffect(() => {
+    if (staleCount === 0) setConfirmAllArmed(false);
+  }, [staleCount]);
+
+  const onConfirmAll = useCallback(() => {
+    if (!confirmAllArmed) {
+      setConfirmAllArmed(true);
+      return;
+    }
+    setConfirmAllArmed(false);
+    patchNodes(staleIds, { checkedAt: now });
+    runMapAction(() => confirmAllStale(who));
+  }, [confirmAllArmed, patchNodes, staleIds, now, runMapAction, who]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -148,8 +191,24 @@ export function MapScreen({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const panel = (
-    <>
+  /**
+   * `inSheet` decides *who* scrolls.
+   *
+   * On the desktop aside the node list is the only scroller and the panel
+   * above it stays pinned. In the phone bottom sheet that is wrong: with a
+   * node selected, the status panel alone is taller than the sheet, the list
+   * collapses to nothing, and everything below the fold — the shield fields
+   * among them — is clipped off with no way to reach it. There the whole
+   * column scrolls as one and the list just runs to its natural height.
+   */
+  const renderPanel = (inSheet: boolean) => (
+    <div
+      className={
+        inSheet
+          ? "min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          : "flex min-h-0 flex-1 flex-col"
+      }
+    >
       <div className="border-b p-3">
         <div className="relative">
           <Search
@@ -163,16 +222,41 @@ export function MapScreen({
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <button
-          type="button"
-          onClick={() => setOnlyStale((v) => !v)}
-          className={`btn mt-2 min-h-9 w-full text-xs ${
-            onlyStale ? "border-[var(--color-warn)]" : ""
-          }`}
-        >
-          <span className="text-[var(--color-warn)]">!</span>
-          {t("map.onlyStale")} · {staleCount}
-        </button>
+        <div className="mt-2 flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => setOnlyStale((v) => !v)}
+            className={`btn min-h-9 flex-1 text-xs ${
+              onlyStale ? "border-[var(--color-warn)]" : ""
+            }`}
+          >
+            <span className="text-[var(--color-warn)]">!</span>
+            {t("map.onlyStale")} · {staleCount}
+          </button>
+          {/*
+            Sits next to the filter, not in the node panel: it is about the
+            flagged *list*, and the natural move is "show me what's flagged,
+            decide none of it can have changed, clear the lot".
+          */}
+          {canMonitor && staleCount > 0 && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={onConfirmAll}
+              title={t("own.confirmAllHint")}
+              className={`btn min-h-9 shrink-0 text-xs ${
+                confirmAllArmed
+                  ? "border-[var(--color-warn)] text-[var(--color-warn)]"
+                  : ""
+              }`}
+            >
+              <CheckCheck size={14} />
+              {confirmAllArmed
+                ? t("own.confirmAllSure", { n: staleCount })
+                : t("own.confirmAll")}
+            </button>
+          )}
+        </div>
       </div>
 
       {selectedNode && (
@@ -184,49 +268,33 @@ export function MapScreen({
           readOnly={!canMonitor}
           onClose={() => setSelected(null)}
           run={runMapAction}
+          patch={patchNode}
         />
       )}
 
-      <ul className="min-h-0 flex-1 overflow-y-auto p-2">
-        {listed.map((node) => {
-          const stale = needsCheck(node.checkedAt, node.shieldUntil, now);
-          const left = shieldSecondsLeft(node.shieldUntil, now);
-          return (
-            <li key={node.id}>
-              <button
-                onClick={() => setSelected(node.id)}
-                className={`flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-start text-xs transition-colors hover:bg-[var(--color-panel-2)] ${
-                  selected === node.id ? "bg-[var(--color-panel-2)]" : ""
-                }`}
-              >
-                <span
-                  className="size-2.5 shrink-0 rounded-full"
-                  style={{ background: colorOf(node.owner) }}
-                />
-                <KindIcon kind={node.kind} size={14} />
-                <span className="min-w-0 flex-1 truncate">{node.name}</span>
-                {node.battleSince !== null && (
-                  <Swords
-                    size={13}
-                    className="shrink-0"
-                    style={{ color: BATTLE_COLOR }}
-                    aria-label={t("battle.title")}
-                  />
-                )}
-                {left > 0 && (
-                  <span className="mono text-[10px] text-[#7dd3fc]">
-                    {formatDuration(left)}
-                  </span>
-                )}
-                {stale && (
-                  <span className="rounded bg-[var(--color-warn)]/20 px-1 text-[10px] font-bold text-[var(--color-warn)]">
-                    !
-                  </span>
-                )}
-              </button>
-            </li>
-          );
-        })}
+      {/*
+        Rows are memoised (see NodeRow). The clock ticks once a second and this
+        list is 231 entries with a lucide glyph each — rebuilding all of them
+        every tick was the map screen's steady background cost, on a desktop as
+        much as on a phone. Now a tick only redraws the handful of rows whose
+        countdown actually moved.
+      */}
+      <ul className={inSheet ? "p-2" : "min-h-0 flex-1 overflow-y-auto p-2"}>
+        {listed.map((node) => (
+          <NodeListRow
+            key={node.id}
+            id={node.id}
+            name={node.name}
+            kind={node.kind}
+            color={colorOf(node.owner)}
+            battle={node.battleSince !== null}
+            battleLabel={t("battle.title")}
+            shieldLeft={shieldSecondsLeft(node.shieldUntil, now)}
+            stale={needsCheck(node.checkedAt, node.shieldUntil, now)}
+            selected={selected === node.id}
+            onSelect={onSelectNode}
+          />
+        ))}
       </ul>
 
       {canMonitor && (
@@ -247,7 +315,7 @@ export function MapScreen({
           />
         </div>
       )}
-    </>
+    </div>
   );
 
   return (
@@ -283,7 +351,7 @@ export function MapScreen({
       </div>
 
       <aside className="hidden min-h-0 flex-col bg-[var(--color-panel)] lg:flex">
-        {panel}
+        {renderPanel(false)}
       </aside>
 
       {sheetOpen && (
@@ -293,8 +361,13 @@ export function MapScreen({
             className="absolute inset-0 bg-black/50"
             onClick={() => setSheetOpen(false)}
           />
-          <div className="absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-2xl border-t bg-[var(--color-panel)]">
-            <div className="flex items-center justify-between border-b px-3 py-2">
+          {/*
+            Height off --app-height, not dvh: the shell locks that value and
+            ignores the URL bar collapsing (see ViewportLock). A dvh sheet
+            resizes under the finger mid-scroll on a real phone.
+          */}
+          <div className="absolute inset-x-0 bottom-0 flex max-h-[calc(var(--app-height,100svh)*0.85)] flex-col rounded-t-2xl border-t bg-[var(--color-panel)]">
+            <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
               <span className="text-sm font-semibold">{t("nav.map")}</span>
               <button
                 className="btn btn-ghost !min-h-10 !min-w-10 !px-0"
@@ -303,13 +376,80 @@ export function MapScreen({
                 <X size={16} />
               </button>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col">{panel}</div>
+            {renderPanel(true)}
           </div>
         </div>
       )}
     </div>
   );
 }
+
+/**
+ * One line of the node list.
+ *
+ * Takes primitives rather than the row object: every snapshot pull replaces
+ * all 231 `NodeRow`s with fresh objects that usually say nothing new, and a
+ * memo keyed on identity would treat each pull as a full list rebuild.
+ */
+const NodeListRow = memo(function NodeListRow({
+  id,
+  name,
+  kind,
+  color,
+  battle,
+  battleLabel,
+  shieldLeft,
+  stale,
+  selected,
+  onSelect,
+}: {
+  id: number;
+  name: string;
+  kind: NodeKind;
+  color: string;
+  battle: boolean;
+  battleLabel: string;
+  shieldLeft: number;
+  stale: boolean;
+  selected: boolean;
+  onSelect: (id: number) => void;
+}) {
+  return (
+    <li>
+      <button
+        onClick={() => onSelect(id)}
+        className={`flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-start text-xs transition-colors hover:bg-[var(--color-panel-2)] ${
+          selected ? "bg-[var(--color-panel-2)]" : ""
+        }`}
+      >
+        <span
+          className="size-2.5 shrink-0 rounded-full"
+          style={{ background: color }}
+        />
+        <KindIcon kind={kind} size={14} />
+        <span className="min-w-0 flex-1 truncate">{name}</span>
+        {battle && (
+          <Swords
+            size={13}
+            className="shrink-0"
+            style={{ color: BATTLE_COLOR }}
+            aria-label={battleLabel}
+          />
+        )}
+        {shieldLeft > 0 && (
+          <span className="mono text-[10px] text-[#7dd3fc]">
+            {formatDuration(shieldLeft)}
+          </span>
+        )}
+        {stale && (
+          <span className="rounded bg-[var(--color-warn)]/20 px-1 text-[10px] font-bold text-[var(--color-warn)]">
+            !
+          </span>
+        )}
+      </button>
+    </li>
+  );
+});
 
 /**
  * SVG map + chrome that only depends on the coarse map clock. Memoised so the
@@ -471,7 +611,13 @@ const OwnershipMap = memo(function OwnershipMap({
         }
       />
 
-      <div className="pointer-events-none absolute end-2 top-2 flex flex-col items-end gap-1">
+      {/*
+        Below the toolbar on a phone, not beside it. The toolbar is
+        `flex-wrap`, so at 375px its five buttons take two rows and run the
+        full width — straight under K6 and K18. From `sm` up it is one row and
+        nowhere near the right edge, so the tally goes back to the top corner.
+      */}
+      <div className="pointer-events-none absolute end-2 top-24 flex flex-col items-end gap-1 sm:top-2">
         {kingdomList.map((k) => (
           <span
             key={k.id}
@@ -532,6 +678,7 @@ function NodePanel({
   readOnly,
   onClose,
   run,
+  patch,
 }: {
   node: NodeRow;
   now: number;
@@ -540,12 +687,27 @@ function NodePanel({
   readOnly: boolean;
   onClose: () => void;
   run: (fn: () => void | Promise<unknown>) => void;
+  patch: (id: number, fields: NodePatch) => void;
 }) {
   const { t } = useT();
   const { list: kingdomList, labelOf } = useKingdoms();
   const [days, setDays] = useState("");
   const [hours, setHours] = useState("");
   const [minutes, setMinutes] = useState("");
+
+  /**
+   * Paint the change, then send it.
+   *
+   * Everything on this panel is one tap, and a tap that shows nothing for the
+   * length of a DB write plus a snapshot pull reads as a tap that missed —
+   * which is why officers were hammering the kingdom buttons to get a status
+   * to stick. The local edit is held until a snapshot newer than the write
+   * lands (see `useLiveMap`), so the server still has the last word.
+   */
+  const apply = (fields: NodePatch, send: () => Promise<unknown>) => {
+    patch(node.id, fields);
+    run(send);
+  };
 
   const left = shieldSecondsLeft(node.shieldUntil, now);
   const stale = needsCheck(node.checkedAt, node.shieldUntil, now);
@@ -579,21 +741,37 @@ function NodePanel({
         </p>
       ) : (
       <>
-      {/* Auto-fills so the row still reads with three kingdoms or six. */}
+      {/*
+        Auto-fills so the row still reads with three kingdoms or six.
+
+        Never disabled while a write is in flight: blocking the next tap is
+        what made a mistyped owner take three tries to correct. Setting an
+        owner is idempotent — the last tap wins on the server too.
+      */}
       <div className="mb-2 grid grid-cols-[repeat(auto-fill,minmax(3.5rem,1fr))] gap-1">
         {kingdomList.map((k) => (
           <OwnerButton
             key={k.id}
             kingdom={k}
             active={node.owner === k.id}
-            disabled={pending}
-            onClick={() => run(() => void setOwner(node.id, k.id, who))}
+            disabled={false}
+            onClick={() =>
+              apply(
+                // The server ends the battle with the same write; mirror it or
+                // the swords hang around until the snapshot lands.
+                { owner: k.id, checkedAt: now, battleSince: null },
+                () => setOwner(node.id, k.id, who),
+              )
+            }
           />
         ))}
         <button
           type="button"
-          disabled={pending}
-          onClick={() => run(() => void setOwner(node.id, null, who))}
+          onClick={() =>
+            apply({ owner: null, checkedAt: now, battleSince: null }, () =>
+              setOwner(node.id, null, who),
+            )
+          }
           className={`min-h-11 rounded-lg border text-xs transition-colors ${
             node.owner === null
               ? "bg-[var(--color-text-dim)] text-[#0b0f17]"
@@ -607,8 +785,9 @@ function NodePanel({
 
       <button
         type="button"
-        disabled={pending}
-        onClick={() => run(() => void confirmNode(node.id, who))}
+        onClick={() =>
+          apply({ checkedAt: now }, () => confirmNode(node.id, who))
+        }
         className="btn min-h-11 w-full text-xs"
       >
         <Check size={14} />
@@ -650,7 +829,13 @@ function NodePanel({
               type="button"
               disabled={pending}
               onClick={() =>
-                run(() => void setBattle(node.id, battleSince === null, who))
+                apply(
+                  {
+                    battleSince: battleSince === null ? now : null,
+                    checkedAt: now,
+                  },
+                  () => setBattle(node.id, battleSince === null, who),
+                )
               }
               className="btn mt-2 min-h-11 w-full text-xs"
               style={
@@ -682,7 +867,11 @@ function NodePanel({
               <button
                 type="button"
                 disabled={pending}
-                onClick={() => run(() => void clearShield(node.id, who))}
+                onClick={() =>
+                  apply({ shieldUntil: null, checkedAt: now }, () =>
+                    clearShield(node.id, who),
+                  )
+                }
                 className="btn btn-ghost !min-h-9 !px-2 text-xs"
               >
                 {t("shield.clear")}
@@ -750,20 +939,22 @@ function NodePanel({
           <button
             type="button"
             disabled={pending || (!days && !hours && !minutes)}
-            onClick={() =>
-              run(() => {
-                void setShield(
-                  node.id,
-                  Number(days) || 0,
-                  Number(hours) || 0,
-                  Number(minutes) || 0,
-                  who,
-                );
-                setDays("");
-                setHours("");
-                setMinutes("");
-              })
-            }
+            onClick={() => {
+              const d = Number(days) || 0;
+              const h = Number(hours) || 0;
+              const m = Number(minutes) || 0;
+              const seconds = Math.round(d * 86400 + h * 3600 + m * 60);
+              setDays("");
+              setHours("");
+              setMinutes("");
+              apply(
+                {
+                  shieldUntil: seconds > 0 ? now + seconds : null,
+                  checkedAt: now,
+                },
+                () => setShield(node.id, d, h, m, who),
+              );
+            }}
             className="btn btn-primary mt-1.5 !min-h-10 w-full text-xs"
           >
             <ShieldPlus size={14} />

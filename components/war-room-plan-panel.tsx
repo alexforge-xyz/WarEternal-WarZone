@@ -1,8 +1,12 @@
 "use client";
 
 import { useTransition } from "react";
-import { Eraser } from "lucide-react";
-import { clearPlan, setPlanningKingdom } from "@/app/actions/plan";
+import { Eraser, ShieldHalf } from "lucide-react";
+import {
+  clearPlan,
+  setBypassShields,
+  setPlanningKingdom,
+} from "@/app/actions/plan";
 import type { PlanSnapshot } from "@/lib/plan-types";
 import type { PlanStats } from "@/lib/plan-stats";
 import { CRYSTAL_COLOR } from "@/lib/crystals";
@@ -29,7 +33,7 @@ export function WarRoomPlanPanel({
   const { t, n } = useT();
   // Always "K6" / custom nick — not translated "Kingdom 6".
   const { list, shortOf } = useKingdoms();
-  const { canEdit } = useRole();
+  const { canEdit, canPlan } = useRole();
   const [pending, start] = useTransition();
 
   function run(fn: () => Promise<{ ok: boolean; plan?: PlanSnapshot }>) {
@@ -72,6 +76,46 @@ export function WarRoomPlanPanel({
           </span>
         ) : null}
 
+        {/*
+          Reads as a state, not a verb: "щиты: обход — активно". A button
+          labelled "bypass shields" leaves you guessing whether you are looking
+          at what it does or at what it is currently doing, and this one
+          silently changes what every trail drawn afterwards means.
+        */}
+        {canPlan ? (
+          <button
+            type="button"
+            disabled={pending}
+            aria-pressed={plan.bypassShields}
+            title={t("plan.bypassHint")}
+            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] leading-tight transition-colors ${
+              plan.bypassShields
+                ? "border-[var(--color-warn)] text-[var(--color-warn)]"
+                : "border-[var(--color-line)] text-[var(--color-text-dim)]"
+            }`}
+            onClick={() => run(() => setBypassShields(!plan.bypassShields))}
+          >
+            <ShieldHalf size={11} />
+            <span>{t("plan.bypass")}</span>
+            <span className="font-semibold">
+              {plan.bypassShields ? t("plan.bypassOn") : t("plan.bypassOff")}
+            </span>
+          </button>
+        ) : plan.bypassShields ? (
+          // Guests and helpers still need to know which question the plan on
+          // screen is answering.
+          <span
+            className="inline-flex items-center gap-1 text-[10px] text-[var(--color-warn)]"
+            title={t("plan.bypassHint")}
+          >
+            <ShieldHalf size={11} />
+            {t("plan.bypass")} {t("plan.bypassOn")}
+          </span>
+        ) : null}
+
+        <span className="text-[var(--color-line)]" aria-hidden>
+          ·
+        </span>
         <span
           className="font-medium tabular-nums text-[var(--color-text)]"
           title={
@@ -154,8 +198,14 @@ export function WarRoomPlanPanel({
         )}
       </div>
 
+      {/*
+        Wraps rather than truncates. These messages name the thing standing in
+        the way — "on the «Worldbreaker Battlefield» gate" — and on a phone
+        `truncate` ate the end of exactly the sentence worth reading. Two lines
+        of 10px, and only while an error is up.
+      */}
       {error ? (
-        <p className="mt-0.5 truncate text-[10px] text-[var(--color-danger)]">
+        <p className="mt-0.5 text-[10px] leading-snug text-[var(--color-danger)]">
           {error}
         </p>
       ) : null}

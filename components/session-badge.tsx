@@ -46,10 +46,15 @@ export function SessionBadge() {
           router.refresh();
         })
       }
-      className="btn btn-ghost !min-h-9 !px-2.5 text-xs"
-      title={t("auth.logout")}
+      className="btn btn-ghost !min-h-9 shrink-0 !px-2.5 text-xs"
+      // Both facts on the tooltip, since the role word is dropped on a phone:
+      // there it was the widest thing in the header and the first cause of the
+      // row overflowing. The icon still says "this is the way out".
+      title={`${t(ROLE_KEY[role])} — ${t("auth.logout")}`}
     >
-      <span className="text-[var(--color-accent)]">{t(ROLE_KEY[role])}</span>
+      <span className="hidden text-[var(--color-accent)] sm:inline">
+        {t(ROLE_KEY[role])}
+      </span>
       <LogOut size={14} />
     </button>
   );
